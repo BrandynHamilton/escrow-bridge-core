@@ -48,5 +48,5 @@ It allows users to initiate escrowed payments, which are automatically released 
 - Exposes `/status` API for frontend polling
 
 ## Demo
-[Escrow Bridge MVP Demo](https://drive.google.com/file/d/1_XpgDnOR1mqEqa-00UZo1b7oL_78fjQZ/view?usp=sharing)
 
+[Escrow Bridge MVP Demo](https://drive.google.com/file/d/1_XpgDnOR1mqEqa-00UZo1b7oL_78fjQZ/view?usp=sharing)
