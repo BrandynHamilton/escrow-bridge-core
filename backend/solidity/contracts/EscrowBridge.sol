@@ -57,12 +57,18 @@ contract EscrowBridge is Ownable, ReentrancyGuard {
     );
 
     event FeeRecipientUpdated(address oldRecipient, address newRecipient);
+    event EscrowExpired(
+        bytes32 indexed escrowId,
+        address indexed payer,
+        uint256 amount
+    );
 
     struct Payment {
         address payer;
         uint256 amount;
         uint256 lastCheckTimestamp;
         uint256 checkCount;
+        uint256 createdAt;
     }
 
     ISettlementRegistry public immutable settlementRegistry;
@@ -72,6 +78,7 @@ contract EscrowBridge is Ownable, ReentrancyGuard {
     uint256 public maxPaymentAmount;
     uint256 public fee;
     address public feeRecipient;
+    uint256 public maxEscrowTime; // in seconds
     uint256 public constant FEE_DENOMINATOR = 10000; // 100% = 10000 bps
 
     uint256 public totalEscrowed;
@@ -85,6 +92,7 @@ contract EscrowBridge is Ownable, ReentrancyGuard {
     mapping(bytes32 => uint256) private pendingIndex;
 
     bytes32[] public completedEscrows;
+    bytes32[] public expiredEscrows;
 
     uint256 public constant MAX_CHECK_COUNT = 10;
     uint256 public constant CHECK_INTERVAL = 1 hours;
@@ -105,9 +113,11 @@ contract EscrowBridge is Ownable, ReentrancyGuard {
         address _settlementRegistry,
         string memory _recipientEmail,
         address _usdcToken,
-        uint256 _fee
+        uint256 _fee,
+        uint256 _maxEscrowTime
     ) Ownable(msg.sender) {
         require(_minPaymentAmount < _maxPaymentAmount, "Invalid limits");
+        require(_maxEscrowTime > 0, "Escrow time must be > 0");
         minPaymentAmount = _minPaymentAmount;
         maxPaymentAmount = _maxPaymentAmount;
         settlementRegistry = ISettlementRegistry(_settlementRegistry);
@@ -116,6 +126,7 @@ contract EscrowBridge is Ownable, ReentrancyGuard {
         authorizedAttesters[msg.sender] = true;
         fee = _fee;
         feeRecipient = owner();
+        maxEscrowTime = _maxEscrowTime;
     }
 
     receive() external payable {}
@@ -164,7 +175,8 @@ contract EscrowBridge is Ownable, ReentrancyGuard {
             payer: msg.sender,
             amount: amount,
             lastCheckTimestamp: block.timestamp,
-            checkCount: 0
+            checkCount: 0,
+            createdAt: block.timestamp
         });
         pendingEscrows.push(idHash);
         pendingIndex[idHash] = pendingEscrows.length;
@@ -180,6 +192,31 @@ contract EscrowBridge is Ownable, ReentrancyGuard {
         );
         require(p.payer != address(0), "Not initialized");
         require(!isSettled[escrowId], "Already settled");
+
+        // Check if expired
+        if (block.timestamp > p.createdAt + maxEscrowTime) {
+            // Mark as settled to prevent re-use
+            isSettled[escrowId] = true;
+
+            // Remove from pending
+            uint256 idx1 = pendingIndex[escrowId];
+            if (idx1 > 0) {
+                uint256 idx0 = idx1 - 1;
+                uint256 last0 = pendingEscrows.length - 1;
+                if (idx0 != last0) {
+                    bytes32 lastId = pendingEscrows[last0];
+                    pendingEscrows[idx0] = lastId;
+                    pendingIndex[lastId] = idx1;
+                }
+                pendingEscrows.pop();
+                delete pendingIndex[escrowId];
+            }
+
+            expiredEscrows.push(escrowId);
+            totalEscrowed -= p.amount; // Adjust total escrowed amount
+            emit EscrowExpired(escrowId, p.payer, p.amount);
+            return;
+        }
 
         ISettlementRegistry.Status status = settlementRegistry
             .getSettlementStatus(escrowId);
@@ -245,9 +282,43 @@ contract EscrowBridge is Ownable, ReentrancyGuard {
         }
     }
 
+    function expireEscrow(bytes32 escrowId) external nonReentrant {
+        Payment storage p = payments[escrowId];
+        require(p.payer != address(0), "Escrow not initialized");
+        require(!isSettled[escrowId], "Already settled");
+        require(
+            block.timestamp > p.createdAt + maxEscrowTime,
+            "Not expired yet"
+        );
+
+        isSettled[escrowId] = true;
+
+        uint256 idx1 = pendingIndex[escrowId];
+        if (idx1 > 0) {
+            uint256 idx0 = idx1 - 1;
+            uint256 last0 = pendingEscrows.length - 1;
+            if (idx0 != last0) {
+                bytes32 lastId = pendingEscrows[last0];
+                pendingEscrows[idx0] = lastId;
+                pendingIndex[lastId] = idx1;
+            }
+            pendingEscrows.pop();
+            delete pendingIndex[escrowId];
+        }
+
+        expiredEscrows.push(escrowId);
+        totalEscrowed -= p.amount;
+        emit EscrowExpired(escrowId, p.payer, p.amount);
+    }
+
     function getFreeBalance() public view returns (uint256) {
         uint256 rawBalance = getUsdcBalance();
         return rawBalance - totalEscrowed;
+    }
+
+    function isEscrowExpired(bytes32 escrowId) public view returns (bool) {
+        Payment memory p = payments[escrowId];
+        return block.timestamp > p.createdAt + maxEscrowTime;
     }
 
     function setFeeRecipient(address newRecipient) external onlyOwner {

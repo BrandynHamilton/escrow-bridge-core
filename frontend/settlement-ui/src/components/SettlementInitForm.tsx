@@ -2,8 +2,10 @@ import { useState } from "react";
 import { ethers } from "ethers";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
+import './styles/index.css'; 
 
-const RAMP_ADDRESS = "0xf11692c3AD99C121923288630F7e21e1d57b3689"; // replace with your actual contract address
+const BRIDGE_ADDRESS = "0x0460f6f3C3448Cda1E9C6d54ebFA99D7C8f0C168"; 
+
 const ERC20_ABI = [
   {
     constant: true,
@@ -67,12 +69,48 @@ const RAMP_ABI = [
 	{
 		"inputs": [
 			{
+				"internalType": "bytes32",
+				"name": "escrowId",
+				"type": "bytes32"
+			}
+		],
+		"name": "expireEscrow",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
 				"internalType": "uint256",
 				"name": "amount",
 				"type": "uint256"
 			}
 		],
 		"name": "fundEscrow",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "bytes32",
+				"name": "idHash",
+				"type": "bytes32"
+			},
+			{
+				"internalType": "bytes32",
+				"name": "emailHash",
+				"type": "bytes32"
+			},
+			{
+				"internalType": "uint256",
+				"name": "amount",
+				"type": "uint256"
+			}
+		],
+		"name": "initPayment",
 		"outputs": [],
 		"stateMutability": "nonpayable",
 		"type": "function"
@@ -107,6 +145,11 @@ const RAMP_ABI = [
 			{
 				"internalType": "uint256",
 				"name": "_fee",
+				"type": "uint256"
+			},
+			{
+				"internalType": "uint256",
+				"name": "_maxEscrowTime",
 				"type": "uint256"
 			}
 		],
@@ -150,6 +193,31 @@ const RAMP_ABI = [
 		"anonymous": false,
 		"inputs": [
 			{
+				"indexed": true,
+				"internalType": "bytes32",
+				"name": "escrowId",
+				"type": "bytes32"
+			},
+			{
+				"indexed": true,
+				"internalType": "address",
+				"name": "payer",
+				"type": "address"
+			},
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "amount",
+				"type": "uint256"
+			}
+		],
+		"name": "EscrowExpired",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
 				"indexed": false,
 				"internalType": "address",
 				"name": "oldRecipient",
@@ -164,29 +232,6 @@ const RAMP_ABI = [
 		],
 		"name": "FeeRecipientUpdated",
 		"type": "event"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "bytes32",
-				"name": "idHash",
-				"type": "bytes32"
-			},
-			{
-				"internalType": "bytes32",
-				"name": "emailHash",
-				"type": "bytes32"
-			},
-			{
-				"internalType": "uint256",
-				"name": "amount",
-				"type": "uint256"
-			}
-		],
-		"name": "initPayment",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
 	},
 	{
 		"anonymous": false,
@@ -408,6 +453,25 @@ const RAMP_ABI = [
 		"type": "function"
 	},
 	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"name": "expiredEscrows",
+		"outputs": [
+			{
+				"internalType": "bytes32",
+				"name": "",
+				"type": "bytes32"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
 		"inputs": [],
 		"name": "fee",
 		"outputs": [
@@ -559,6 +623,25 @@ const RAMP_ABI = [
 		"inputs": [
 			{
 				"internalType": "bytes32",
+				"name": "escrowId",
+				"type": "bytes32"
+			}
+		],
+		"name": "isEscrowExpired",
+		"outputs": [
+			{
+				"internalType": "bool",
+				"name": "",
+				"type": "bool"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "bytes32",
 				"name": "",
 				"type": "bytes32"
 			}
@@ -577,6 +660,19 @@ const RAMP_ABI = [
 	{
 		"inputs": [],
 		"name": "MAX_CHECK_COUNT",
+		"outputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [],
+		"name": "maxEscrowTime",
 		"outputs": [
 			{
 				"internalType": "uint256",
@@ -654,6 +750,11 @@ const RAMP_ABI = [
 			{
 				"internalType": "uint256",
 				"name": "checkCount",
+				"type": "uint256"
+			},
+			{
+				"internalType": "uint256",
+				"name": "createdAt",
 				"type": "uint256"
 			}
 		],
@@ -740,6 +841,8 @@ export default function SettlementInitForm() {
   const [status, setStatus] = useState<string | null>(null);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [usdcBalance, setUsdcBalance] = useState<string | null>(null);
+  const [contractUsdcBalance, setContractUsdcBalance] = useState<string | null>(null);
+  const [freeBalance, setFreeBalance] = useState<string | null>(null);
 
   const generateSalt = () =>
     "0x" + ethers.utils.hexlify(ethers.utils.randomBytes(32)).slice(2);
@@ -751,6 +854,26 @@ export default function SettlementInitForm() {
     return window.ethereum;
   };
 
+  const fetchBalances = async (signer: ethers.Signer, address: string) => {
+    try {
+      const contract = new ethers.Contract(BRIDGE_ADDRESS, RAMP_ABI, signer);
+      const usdcTokenAddress = await contract.usdcToken();
+      const decimals = 6;
+
+      const usdcContract = new ethers.Contract(usdcTokenAddress, ERC20_ABI, signer);
+      const tokenBalanceRaw = await usdcContract.balanceOf(address);
+      setUsdcBalance(ethers.utils.formatUnits(tokenBalanceRaw, decimals));
+
+      const rawContractUsdcBalance = await contract.getUsdcBalance();
+      setContractUsdcBalance(ethers.utils.formatUnits(rawContractUsdcBalance, decimals));
+
+      const rawFreeBalance = await contract.getFreeBalance();
+      setFreeBalance(ethers.utils.formatUnits(rawFreeBalance, decimals));
+    } catch (err: any) {
+      console.error("Error fetching balances:", err.message);
+    }
+  };
+
   const connectWallet = async () => {
     const provider = getMetaMaskProvider();
     if (!provider || !provider.isMetaMask) {
@@ -759,27 +882,12 @@ export default function SettlementInitForm() {
     }
 
     await provider.request({ method: "eth_requestAccounts" });
-
     const ethersProvider = new ethers.providers.Web3Provider(provider);
     const signer = ethersProvider.getSigner();
     const address = await signer.getAddress();
     setWalletAddress(address);
 
-    // Fetch and show USDC balance on connect
-    try {
-      const contract = new ethers.Contract(RAMP_ADDRESS, RAMP_ABI, signer);
-      const usdcTokenAddress = await contract.usdcToken();
-
-      const usdcContract = new ethers.Contract(usdcTokenAddress, ERC20_ABI, signer);
-      const tokenDecimals = await usdcContract.decimals();
-      const tokenBalanceRaw = await usdcContract.balanceOf(address);
-      const tokenBalance = ethers.utils.formatUnits(tokenBalanceRaw, tokenDecimals);
-
-      setUsdcBalance(tokenBalance);
-    } catch (err: any) {
-      console.error("Error fetching USDC balance:", err.message);
-      setUsdcBalance(null);
-    }
+    await fetchBalances(signer, address);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -789,37 +897,32 @@ export default function SettlementInitForm() {
     try {
       if (!window.ethereum) throw new Error("No wallet detected");
       const provider = getMetaMaskProvider();
-      if (!provider || !provider.isMetaMask) {
-        throw new Error("MetaMask provider not found.");
-      }
+      if (!provider || !provider.isMetaMask) throw new Error("MetaMask provider not found.");
+
       const ethersProvider = new ethers.providers.Web3Provider(provider);
       const signer = ethersProvider.getSigner();
       const address = await signer.getAddress();
-
-      const contract = new ethers.Contract(RAMP_ADDRESS, RAMP_ABI, signer);
+	  console.log('address:', address)
+      const contract = new ethers.Contract(BRIDGE_ADDRESS, RAMP_ABI, signer);
       const decimals = 6;
+	  console.log('decimals:',decimals)
+
       const rawAmount = ethers.utils.parseUnits(amount, decimals);
+
+      // 🔒 Validate free balance
+      const rawFreeBalance = await contract.getFreeBalance();
+	  console.log('rawFreeBalance:',rawFreeBalance)
+      if (rawFreeBalance.lt(rawAmount)) {
+        setStatus("Insufficient contract free balance to process this settlement.");
+        return;
+      }
+
       const recipientEmail = await contract.recipientEmail();
-      const usdcTokenAddress = await contract.usdcToken();
-      console.log("Recipient Email:", recipientEmail);
-
-      const usdcContract = new ethers.Contract(usdcTokenAddress, ERC20_ABI, signer);
-      const tokenBalanceRaw = await usdcContract.balanceOf(address);
-      const tokenBalance = ethers.utils.formatUnits(tokenBalanceRaw, decimals);
-      console.log("USDC Balance:", tokenBalance);
-      setUsdcBalance(tokenBalance);
-
+	  console.log('recipientEmail:', recipientEmail)
       const salt = generateSalt();
       const settlementId = `${address}-${Date.now()}`;
-
-      const idHash = ethers.utils.solidityKeccak256(
-        ["bytes32", "string"],
-        [salt, settlementId]
-      );
-      const userEmailHash = ethers.utils.solidityKeccak256(
-        ["bytes32", "string"],
-        [salt, email]
-      );
+      const idHash = ethers.utils.solidityKeccak256(["bytes32", "string"], [salt, settlementId]);
+      const userEmailHash = ethers.utils.solidityKeccak256(["bytes32", "string"], [salt, email]);
 
       await fetch(`${BACKEND_API}/api/store_salt`, {
         method: "POST",
@@ -832,9 +935,15 @@ export default function SettlementInitForm() {
         }),
       });
 
+	  console.log('at initPayment')
+
       const tx = await contract.initPayment(idHash, userEmailHash, rawAmount);
+	  console.log(' after initPayment')
       await tx.wait();
       setStatus("Transaction confirmed! Waiting for settlement...");
+
+      // 🔄 Refresh balances after payment
+      await fetchBalances(signer, address);
 
       for (let i = 0; i < 60; i++) {
         const res = await fetch("http://localhost:4028/status", {
@@ -866,7 +975,17 @@ export default function SettlementInitForm() {
 
       {usdcBalance && (
         <div className="text-sm text-gray-700">
-          USDC Balance: {usdcBalance}
+          Wallet USDC Balance: {usdcBalance}
+        </div>
+      )}
+      {contractUsdcBalance && (
+        <div className="text-sm text-gray-700">
+          Contract USDC Balance: {contractUsdcBalance}
+        </div>
+      )}
+      {freeBalance && (
+        <div className="text-sm text-gray-700">
+          Contract Free Balance: {freeBalance}
         </div>
       )}
 
