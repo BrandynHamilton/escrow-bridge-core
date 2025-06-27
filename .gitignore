@@ -7,3 +7,4 @@ backend/__pycache__/
 *.pyd
 *.venv
 *.key
+backend/keystores/

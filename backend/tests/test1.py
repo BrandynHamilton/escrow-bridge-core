@@ -1,6 +1,8 @@
 from chainsettle import network_func, generate_salt, ZERO_ADDRESS, keccak256
 from chainsettle_sdk import ChainSettleService
 import os
+from typing import Dict, Optional, List
+
 from dotenv import load_dotenv
 import time
 import json
@@ -10,22 +12,20 @@ load_dotenv()
 # ─────────────────────────────────────────────────────────────────────────────
 # Load configuration and ABI paths
 # ─────────────────────────────────────────────────────────────────────────────
-CONFIG_PATH = os.path.join(os.getcwd(), 'solidity', 'chainsettle_config.json')
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+CONFIG_PATH = os.path.join(BASE_DIR, 'chainsettle_config.json')
+ABI_PATH = os.path.join(BASE_DIR, 'abi', 'escrowBridgeAbi.json')
+
 with open(CONFIG_PATH, "r") as f:
     config = json.load(f)
 
-ABI_PATH = os.path.join(os.getcwd(), 'solidity', 'abi', 'settlement_ramp_abi.json')
 with open(ABI_PATH, "r") as f:
     ramp_abi = json.load(f)
 
 MAX_256 = 2**256 - 1
 
-
-# USDC_ABI_PATH = os.path.join(os.getcwd(), 'solidity', 'abi', 'settlement_ramp_abi.json')
-# with open(ABI_PATH, "r") as f:
-#     ramp_abi = json.load(f)
-
-SETTLEMENT_RAMP_ADDRESS = os.getenv('SETTLEMENT_RAMP_ADDRESS')
+SETTLEMENT_RAMP_ADDRESS = os.getenv('ESCROW_BRIDGE_ADDRESS')
 print(f"Using SettlementRamp address: {SETTLEMENT_RAMP_ADDRESS}")
 
 THIRD_PARTY_KEY = os.getenv('THIRD_PARTY_KEY')
@@ -101,7 +101,7 @@ def poll_settlement_status_onchain(ramp_contract, id_hash, max_attempts=60, dela
     else:
         print("Polling timed out after 5 minutes.")
 
-def main(settlement_id: str, amount: float, user_email: str, poll_onchain: bool = True):
+def main(amount: float, user_email: str,  settlement_id: Optional[str] = None,):
     """
     1) Connect to Base
     2) Check SettlementRamp’s USDC balance (in raw units)
@@ -109,6 +109,10 @@ def main(settlement_id: str, amount: float, user_email: str, poll_onchain: bool 
     3) Call initPayment(...) on SettlementRamp
     4) Store salt, then poll for finalization
     """
+
+    if not settlement_id:
+        settlement_id = secrets.token_hex(4)
+
     network = 'base'
     PRIVATE_KEY = os.getenv('EVM_PRIVATE_KEY')
     ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY')
@@ -163,6 +167,10 @@ def main(settlement_id: str, amount: float, user_email: str, poll_onchain: bool 
     usdc_address = ramp.functions.usdcToken().call()
     print(f"> SettlementRamp.usdcToken() = {usdc_address}")
 
+    # Fee
+    fee = ramp.functions.fee().call()
+    print(f"> SettlementRamp.fee() = {fee / 10000} ")
+
     # 3) Instantiate a minimal ERC20 handle so we can call decimals() and balanceOf() etc.
     erc20 = w3.eth.contract(address=usdc_address, abi=erc20_abi)
 
@@ -192,7 +200,7 @@ def main(settlement_id: str, amount: float, user_email: str, poll_onchain: bool 
     print(f"> Converting {amount:.6f} USDC → raw = {raw_amount_needed}")
 
     # 9) Check SettlementRamp’s current USDC balance (in raw units)
-    ramp_usdc_balance = erc20.functions.balanceOf(SETTLEMENT_RAMP_ADDRESS).call()
+    ramp_usdc_balance = ramp.functions.getFreeBalance().call()
     human_ramp_balance = ramp_usdc_balance / (10 ** token_decimals)
     print(f"> SettlementRamp USDC balance (raw) = {ramp_usdc_balance}")
     print(f"  → in human USDC = {human_ramp_balance:.6f} USDC")
@@ -305,16 +313,41 @@ def main(settlement_id: str, amount: float, user_email: str, poll_onchain: bool 
     salt_bytes = bytes.fromhex(salt_hex[2:])
     settlement_id_bytes = settlement_id.encode('utf-8')  
 
-    id_hash = keccak256(salt_bytes + settlement_id_bytes)
+    if not salt.startswith("0x"):
+            salt = "0x" + salt
+
+    # 2) Compute the same keccak256(abi.encodePacked(salt, settlementId))    
+    id_hash_bytes = w3.solidity_keccak(
+        ["bytes32", "string"],
+        [salt, settlement_id]
+    )
+
+    user_email_hash_bytes = w3.solidity_keccak(
+        ["bytes32", "string"],
+        [salt, user_email]
+    )
+
+    id_hash = id_hash_bytes.hex()
+    print(f"> Computed id_hash = {id_hash}")
 
     print(f'raw_amount_needed = {raw_amount_needed} (≈ {amount:.6f} USDC)')
+
+    balance = erc20.functions.balanceOf(third_party_account.address).call()
+    human_balance = balance / (10 ** token_decimals)
+    print(f"User's USDC balance before settlement: {balance} raw units "
+          f"(≈ {human_balance:.6f} USDC)")
+    
+    # 11.a) Check if the user has enough USDC to cover the settlement
+    if balance < raw_amount_needed:
+        raise Exception(
+            f"❌ User's USDC balance ({human_balance:.6f} USDC) is less than required "
+            f"{amount:.6f} USDC ({raw_amount_needed} raw units).")
 
     time.sleep(5)  # Wait for the approval to be mined
           
     base_tx = third_party_ramp.functions.initPayment(
-        settlement_id,
-        salt_bytes,
-        user_email,
+        id_hash_bytes,
+        user_email_hash_bytes,
         raw_amount_needed
     ).build_transaction({
         "from": third_party_account.address,
@@ -352,7 +385,7 @@ def main(settlement_id: str, amount: float, user_email: str, poll_onchain: bool 
     chainsettle = ChainSettleService()
 
     resp = chainsettle.store_salt(
-        settlement_id=settlement_id,
+        id_hash=id_hash,
         salt=salt_hex,
         email=user_email,
         recipient_email=recipient_email,
@@ -360,185 +393,51 @@ def main(settlement_id: str, amount: float, user_email: str, poll_onchain: bool 
     print(f"✓ Salt stored: {json.dumps(resp, indent=2)}")
 
     # We can also poll settlement activity directly in the smart contract
+    import requests
+
+    def poll_for_status(id_hash: str, max_attempts: int = 60, delay: int = 5):
+        """
+        Polls the Escrow Bridge API for settlement status.
+        """
+        print(f"Polling Escrow Bridge API for settlement status of {id_hash}...")
+        for attempt in range(1, max_attempts + 1):
+            try:
+                r = requests.post(
+                    f"http://localhost:4028/status", json={
+                        "escrowId": id_hash}
+                )
+                r.raise_for_status()
+                resp = r.json()
+                print(f"[Attempt {attempt}] Settlement status: {json.dumps(resp, indent=2)}")
+                if resp['status'] in ['completed']:
+                    return resp
+            except Exception as e:
+                print(f"[Attempt {attempt}] Error polling settlement status: {e}")
+            time.sleep(delay)
+        print("Polling timed out after maximum attempts.")
+
+    old_balance = erc20.functions.balanceOf(third_party_account.address).call()
+    old_human_balance = old_balance / (10 ** token_decimals)    
+    print(f"User's USDC balance before settlement: {old_balance} raw units "
+          f"(≈ {old_human_balance:.6f} USDC)")
    
-    if poll_onchain:
-        print("Polling settlement activity on-chain...")
-        poll_settlement_status_onchain(third_party_ramp, id_hash)
-    else:
-        resp = chainsettle.poll_settlement_activity(settlement_id=settlement_id)
-        print(f"✓ Settlement activity: {json.dumps(resp, indent=2)}")
+    poll_for_status(id_hash)
 
-    print(f'id_hash: {id_hash}')
-
-    is_authorized = ramp.functions.authorizedAttesters(account.address).call()
-    print(f"is_authorized: {is_authorized}")
-    if not is_authorized:
-        try:
-            base_tx = ramp.functions.addAuthorizedAttester(
-                account.address
-            ).build_transaction({
-                "from": account.address,
-                "nonce": w3.eth.get_transaction_count(account.address),
-            })
-            gas_est = w3.eth.estimate_gas(base_tx)
-            latest_block = w3.eth.get_block("latest")
-            base_fee = latest_block.get("baseFeePerGas", w3.to_wei(15, "gwei"))
-            priority_fee = w3.to_wei(2, "gwei")
-            max_fee = base_fee + priority_fee
-
-            base_tx.update({
-                "gas": int(gas_est * 1.2),
-                "maxPriorityFeePerGas": priority_fee,
-                "maxFeePerGas": max_fee,
-                "type": 2
-            })
-            signed_init = account.sign_transaction(base_tx)
-            h_init = w3.eth.send_raw_transaction(signed_init.raw_transaction)
-            receipt_init = w3.eth.wait_for_transaction_receipt(h_init)
-            if receipt_init.status != 1:
-                raise Exception("❌ SettlementRamp.initPayment(...) reverted")
-        except Exception as e:
-            print(f"Error authorizing attester: {e}")
-            return "Failed to authorize attester."
-        
-        print(f"✓ Authorized attester {account.address} → Tx: {h_init.hex()}")
-
-    payer_address = ramp.functions.payments(id_hash).call()[0]   # payments returns (payer, amount, ...)
-    print("payer_address for this idHash:", payer_address)
-
-    (
-        settle_id_str,
-        settle_type,
-        status_enum,
-        metadata,
-        amount_onchain,
-        email_hash,
-        doc_hash,
-        recipient_hash,
-        counterparty,
-        witness,
-        sender
-    ) = settlement_registry.functions.getSettlement(id_hash).call({'from': account.address})
-    print("Registry status for idHash:", status_enum)         # 0=Initialized, 1=Registered, 2=Attested, 3=Confirmed, 4=Failed
-    print("Registry stored amount:", amount_onchain)
-    print("counterparty:", counterparty)
-    print("witness:", witness)
-    print("sender:", sender)
-    print("settle_id_str:", settle_id_str)
-    print("settle_type:", settle_type)
-
-    print(F'account.address = {account.address}')
-    
-    ramp_balance = erc20.functions.balanceOf(SETTLEMENT_RAMP_ADDRESS).call()
-    print("ramp_balance =", (ramp_balance / 1e6))
-
-    time.sleep(5)  # Wait for the approval to be mined
-
-    pending_list = ramp.functions.getPendingEscrows().call()
-
-    # 2) Check if your idHash is present
-    if id_hash in pending_list:
-        idx0 = pending_list.index(id_hash)        # zero-based index
-        idx1 = idx0 + 1                            # Solidity uses 1-based indexing
-        print("pendingIndex (1-based) for this idHash:", idx1)
-    else:
-        print("⛔️ This idHash is not in pendingEscrows.")
-
-    decimals = erc20.functions.decimals().call()
-    print("▶ Token decimals() =", decimals)
-
-    # 1.b) Compute the raw amount you need:
-    #     If your Intention is to send exactly `amount=1.0` USDC, then:
-    raw_payout = int(amount * (10 ** decimals))
-    print("▶ Raw payout needed =", raw_payout)
-    
-    # 1.c) Check the ramp contract’s raw balance
-    ramp_balance_raw = erc20.functions.balanceOf(SETTLEMENT_RAMP_ADDRESS).call()
-    print("▶ Ramp raw balance    =", ramp_balance_raw)
-
-    if ramp_balance_raw < raw_payout:
-        raise Exception(
-            f"❌ Ramp only holds {ramp_balance_raw} raw units, but payer needs {raw_payout}."
-    )
-
-    # try:
-    #     ok = erc20.functions.transfer(account.address, raw_payout).call({
-    #         "from": SETTLEMENT_RAMP_ADDRESS
-    #     })
-    #     print("▶ transfer.call returned:", ok)
-    # except Exception as e:
-    #     print("▶ transfer.call reverted:", e)
-
-    # try:
-    #     est = ramp.functions.settlePayment(id_hash).estimate_gas({ "from": third_party_account.address })
-    #     print("estimateGas succeeded:", est)
-    # except Exception as e:
-    #     print("estimateGas reverted with:", e)
-
-    # try:
-    # # use .call(...) to see if settlePayment itself would revert with a message
-    #     ramp.functions.settlePayment(id_hash).call({ "from": third_party_account.address })
-    #     print("→ settlePayment.call(...) succeeded (no revert)")
-    # except Exception as e:
-    #     print("→ settlePayment.call(...) reverted with:", e)
-
-    user_balance_raw = erc20.functions.balanceOf(third_party_account.address).call()
-    user_balance_human = user_balance_raw / (10 ** token_decimals)
-    print(f"User's USDC balance before settlement: {user_balance_raw} raw units "
-          f"(≈ {user_balance_human:.6f} USDC)")
-
-    base_tx = third_party_ramp.functions.settlePayment(
-        id_hash
-    ).build_transaction({
-        "from": third_party_account.address,
-        "nonce": third_party_w3.eth.get_transaction_count(third_party_account.address),
-    })
-
-    try:
-        gas_est = third_party_w3.eth.estimate_gas(base_tx)
-        print(f"Gas estimate for settlePayment: {gas_est} units")
-    except Exception as e:
-        print(f"Gas estimate for settlePayment failed: {e}")
-        gas_est = 200_000
-    
-    latest_block = third_party_w3.eth.get_block("latest")
-    base_fee = latest_block.get("baseFeePerGas", third_party_w3.to_wei(15, "gwei"))
-    priority_fee = third_party_w3.to_wei(2, "gwei")
-    max_fee = base_fee + priority_fee
-
-    base_tx.update({
-        "gas": int(gas_est * 1.2),
-        "maxPriorityFeePerGas": priority_fee,
-        "maxFeePerGas": max_fee,
-        "type": 2
-    })
-    signed_init = third_party_account.sign_transaction(base_tx)
-    h_init = third_party_w3.eth.send_raw_transaction(signed_init.raw_transaction)
-    receipt_init = third_party_w3.eth.wait_for_transaction_receipt(h_init)
-    if receipt_init.status != 1:
-        raise Exception("❌ SettlementRamp.initPayment(...) reverted")
-    
-    print(f"✓ settlePayment({id_hash.hex()}) submitted → Tx: {h_init.hex()}")
-
-    time.sleep(5)  # Wait for the settlePayment transaction to be mined
-
-    user_balance_raw = erc20.functions.balanceOf(third_party_account.address).call()
-    user_balance_human = user_balance_raw / (10 ** token_decimals)
-    print(f"User's USDC balance after settlement: {user_balance_raw} raw units "
-          f"(≈ {user_balance_human:.6f} USDC)")
+    new_balance = erc20.functions.balanceOf(third_party_account.address).call()
+    new_human_balance = new_balance / (10 ** token_decimals)
+    print(f"User's USDC balance after settlement: {new_balance} raw units "
+          f"(≈ {new_human_balance:.6f} USDC)")
 
     return "Done."
 
 if __name__ == "__main__":
     import secrets
     print("Running Settlement Ramp Test")
-    settlement_id = secrets.token_hex(4) # Generate a random settlement ID
-    amount = 2.0  # Amount in USDC to settle
+    # settlement_id = secrets.token_hex(4) # Generate a random settlement ID
+    amount = 1.0  # Amount in USDC to settle
     user_email = "brandynham1120@gmail.com"
-    poll_onchain = True  # Set to False to use ChainSettleService polling
     main(
-        settlement_id=settlement_id,
+        # settlement_id=settlement_id,
         amount=amount,
         user_email=user_email,
-        poll_onchain=poll_onchain
     )

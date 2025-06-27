@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "escrow-bridge"
+version = "0.1.0"
+description = "Python Library for Escrow Bridge"
+readme = "README.md"
+requires-python = ">=3.7"
+license = "MIT"
+
+authors = [
+    { name = "Brandyn Hamilton", email = "brandynham1120@gmail.com"}
+]
+dependencies = [
+    "chainsettle",
+    "chainsettle-sdk>=0.1.2",
+    "flask-cors>=5.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["escrow_bridge", "escrow_bridge.*"]
+
+[tool.uv.sources]
+chainsettle = { path = "../../chainsettle/core/backend" }

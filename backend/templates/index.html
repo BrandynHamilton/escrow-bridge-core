@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚒️ Web3 Domain Valuator</title>
+    <script src="https://cdn.jsdelivr.net/npm/web3/dist/web3.min.js"></script>
+    <script src="{{ url_for('static', filename='js/contract.js') }}"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            height: 100vh;
+            margin: 0;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .container {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            width: 80%;
+            max-width: 1000px;
+            margin-top: 20px;
+        }
+        .container h1 {
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        .container button {
+            width: 100%;
+            padding: 10px;
+            background-color: #007bff;
+            border: none;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 16px;
+            cursor: pointer;
+            margin-bottom: 10px;
+        }
+        .container button:hover {
+            background-color: #0056b3;
+        }
+        .hidden {
+            display: none !important;
+        }
+        .horizontal-menu {
+            list-style-type: none;
+            margin: 0;
+            padding: 0;
+            display: flex;
+        }
+        .horizontal-menu li {
+            margin-right: 15px;
+        }
+        .horizontal-menu li:last-child {
+            margin-right: 0;
+        }
+    </style>
+</head>
+<body>
+    
+    <div class="container">
+        <ul class="horizontal-menu">
+            <li><a href="/">Optimizer Finance Homepage</a></li>
+            <li><a href="/liquid_domains">Liquid Domains Homepage</a></li>
+            <li><a href="/liquid_domains/mint">Valuation</a></li>
+            <!-- <li><a href="/onchainval">Onchain Valuation</a></li> -->
+            <li><a href="/liquid_domains/endpoints">Deployed Contracts & Endpoints</a></li>
+        </ul>
+        
+        <h1>⚒️ Web3 Domain Valuator</h1>
+
+        <button id="connectWallet">Connect Wallet</button>
+        <div id="walletAddress"></div>
+        <div id="networkId"></div>
+        <div id="networkName"></div>
+
+        <!-- Mint Access NFT Section (Hidden if User Already Owns NFT) -->
+        <h2 class="hidden" id="mintAccessTitle">Mint Access NFT</h2>
+        <button id="mintAccessNFT" class="hidden">Mint Access NFT</button>
+        <p id="mintStatus" class="hidden"></p>
+
+        <!-- Valuation Section (Hidden by default, only shown if user has NFT) -->
+        <h2 id="portfolioTitle" class="hidden">Total Portfolio Value</h2>
+        <div id="portfolioValue" class="hidden"></div>
+
+        <button id="refreshValuation" class="hidden">🔄 Refresh Valuation</button>
+
+        <h2 id="domainValuesTitle" class="hidden">Domain Values</h2>
+        <div id="domainValues" class="hidden"></div>
+    </div>
+
+    <script>
+        let web3;
+        let accounts;
+
+        const networkNames = {
+            1: 'Ethereum Mainnet',
+            42161: 'Arbitrum One',
+            11155420: 'Optimism Sepolia',
+            84532: 'Base Sepolia',
+            43114: 'Avalanche C-Chain',
+            80001: 'Polygon Mumbai Testnet',
+            420: 'Optimism Goerli Testnet',
+            43113: 'Avalanche Fuji Testnet',
+            919: 'Mode Sepolia',
+            10: 'Optimism Mainnet' 
+        };
+
+        async function connectWallet() {
+            if (window.ethereum) {
+                try {
+                    web3 = new Web3(window.ethereum);
+                    accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                    document.getElementById('walletAddress').innerText = 'Connected Wallet: ' + accounts[0];
+
+                    const networkId = await web3.eth.net.getId();
+                    const networkIdNumber = Number(networkId); // Convert BigInt to Number
+
+                    console.log('networkId',networkIdNumber)
+                    if (networkIdNumber !== 10) {
+                        alert('Please connect to the Optimism Mainnet!');
+                        return; // Stop execution if not on Optimism
+                    }
+
+                    document.getElementById('networkId').innerText = 'Network ID: ' + networkId;
+                    document.getElementById('networkName').innerText = 'Network Name: ' + (networkNames[networkId] || 'Unknown Network');
+
+                    await checkAccessNFT(accounts[0]); // Check NFT ownership after connecting
+                } catch (error) {
+                    console.error(error);
+                }
+            } else {
+                alert('Please install MetaMask!');
+            }
+        }
+
+
+        async function init(userAddress) {
+            try {
+                const contract = await initContract();
+                const balance = await contract.methods.initPayment(userAddress).call();
+                console.log("NFT Balance:", balance);
+
+                if (parseInt(balance) > 0) {
+                    enableValuationUI();
+                } else {
+                    enableMintingUI();
+                }
+            } catch (error) {
+                console.error("Error checking NFT balance:", error);
+            }
+        }
+
+        function enableValuationUI() {
+            document.getElementById('refreshValuation').classList.remove("hidden");
+            document.getElementById('domainValues').classList.remove("hidden");
+            document.getElementById('portfolioValue').classList.remove("hidden");
+            document.getElementById('portfolioTitle').classList.remove("hidden");
+            document.getElementById('domainValuesTitle').classList.remove("hidden");
+
+            document.getElementById('mintAccessNFT').classList.add("hidden");
+            document.getElementById('mintStatus').classList.add("hidden");
+            document.getElementById('mintAccessTitle').classList.add("hidden");
+        }
+
+        function enableMintingUI() {
+            document.getElementById('mintAccessNFT').classList.remove("hidden");
+            document.getElementById('mintStatus').classList.remove("hidden");
+            document.getElementById('mintAccessTitle').classList.remove("hidden");
+
+            document.getElementById('refreshValuation').classList.add("hidden");
+            document.getElementById('domainValues').classList.add("hidden");
+            document.getElementById('portfolioValue').classList.add("hidden");
+            document.getElementById('portfolioTitle').classList.add("hidden");
+            document.getElementById('domainValuesTitle').classList.add("hidden");
+        }
+
+        let isFetching = false; // Prevent duplicate requests
+
+        async function refreshValuation() {
+            if (isFetching) {
+                console.log("Request blocked: already fetching...");
+                return;
+            }
+            isFetching = true;
+
+            if (!accounts || accounts.length === 0) {
+                alert('Please connect your wallet first!');
+                isFetching = false;
+                return;
+            }
+
+            const account = accounts[0];
+
+            try {
+                const networkId = await web3.eth.net.getId();
+                const networkName = networkNames[networkId] || 'Unknown Network';
+
+                const response = await fetch('/liquid_domains/api/domain_values', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ account: account, networkName: networkName }),
+                });
+
+                const data = await response.json();
+
+                if (response.status === 403) {
+                    document.getElementById('domainValues').innerHTML = `<p style="color: red;">❌ Access Denied: ${data.error}</p>`;
+                } else {
+                    if (data.portfolioValue !== undefined) {
+                        document.getElementById('portfolioValue').innerText =
+                            'Total Portfolio Value: $' + parseFloat(data.portfolioValue).toFixed(2);
+                    }
+
+                    if (data.cached_valuations) {
+                        displayDomainValues(data.cached_valuations);
+                    }
+
+                    if (data.tx_hash) {
+                        document.getElementById('domainValues').innerHTML += `
+                            <h3>On-Chain Transaction:</h3>
+                            <p>Transaction Hash: <a href="https://optimistic.etherscan.io/tx/${data.tx_hash}" target="_blank">${data.tx_hash}</a></p>
+                        `;
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching valuation data:", error);
+            } finally {
+                isFetching = false;
+            }
+        }
+
+        function displayDomainValues(domainsByContract) {
+            const domainValuesElement = document.getElementById('domainValues');
+            domainValuesElement.innerHTML = '';
+
+            Object.keys(domainsByContract).forEach(contractAddress => {
+                const contractData = domainsByContract[contractAddress];
+                const contractName = contractData.contract_name;
+                const domains = contractData.domains;
+
+                const contractSection = document.createElement('div');
+                contractSection.innerHTML = `<h3>${contractName} (${contractAddress})</h3>`;
+
+                const ul = document.createElement('ul');
+
+                domains.forEach(domainInfo => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<strong>${domainInfo.domain}</strong>: $${parseFloat(domainInfo.value).toFixed(2)}`;
+                    ul.appendChild(li);
+                });
+
+                contractSection.appendChild(ul);
+                domainValuesElement.appendChild(contractSection);
+            });
+        }
+
+        async function mintAccessNFT() {
+            if (!window.ethereum) {
+                alert("Please install MetaMask to mint the NFT.");
+                return;
+            }
+
+            try {
+                await window.ethereum.request({ method: 'eth_requestAccounts' });
+                const accounts = await web3.eth.getAccounts();
+                const userAddress = accounts[0];
+
+                const contract = await initContract();
+                const mintCost = await contract.methods.valuationFee().call();
+                const estimatedGas = await contract.methods.mintAccess().estimateGas({
+                    from: userAddress,
+                    value: mintCost
+                });
+
+                const tx = await contract.methods.mintAccess().send({
+                    from: userAddress,
+                    value: mintCost,
+                    gas: estimatedGas
+                });
+
+                document.getElementById('mintStatus').innerHTML = `✅ NFT Minted! Tx: 
+                    <a href="https://optimistic.etherscan.io/tx/${tx.transactionHash}" target="_blank">
+                        ${tx.transactionHash}
+                    </a>`;
+
+                checkAccessNFT(userAddress);
+            } catch (error) {
+                console.error("Minting failed:", error);
+                document.getElementById('mintStatus').innerText = `❌ Minting failed: ${error.message}`;
+            }
+        }
+
+        window.addEventListener("DOMContentLoaded", function () {
+            document.getElementById('connectWallet').addEventListener('click', connectWallet);
+            document.getElementById('mintAccessNFT').addEventListener('click', mintAccessNFT);
+            document.getElementById('refreshValuation').addEventListener('click', refreshValuation);
+        });
+    </script>
+</body>
+</html>
+
