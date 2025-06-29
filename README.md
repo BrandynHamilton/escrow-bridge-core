@@ -1,10 +1,10 @@
-# EscrowBridge
+# 🌉 EscrowBridge
 
 **EscrowBridge** is a smart contract and listener system that enables trust-minimized, verifiable escrow of payments using off-chain attestations (PayPal) confirmed by the ChainSettle oracle and finalized on-chain.
 
 It allows users to initiate escrowed payments, which are automatically released once ChainSettle confirms the associated off-chain event. The backend monitors for `PaymentInitialized` events and finalizes payments once confirmed.
 
-## 🏗 Architecture
+## Architecture
 
 ### Core Components
 
@@ -12,7 +12,7 @@ It allows users to initiate escrowed payments, which are automatically released 
 - **Python Listener**: Flask service that listens for on-chain events, polls ChainSettle, and triggers settlement.
 - **Frontend**: Web UI to initiate payments and view statuses.
 
-## ⚙️ Smart Contract
+## Smart Contract
 
 ### Key Features
 
@@ -31,7 +31,7 @@ It allows users to initiate escrowed payments, which are automatically released 
 | `addAuthorizedAttester()` | Grants settlement rights to backend                  |
 | `getFreeBalance()`        | Returns contract balance minus total escrowed amount |
 
-## 🧠 Workflow
+## Workflow
 
 1. **User Initiates Payment** via frontend → calls `initPayment(idHash, emailHash, amount)`
 2. **Backend Listener** sees the `PaymentInitialized` event
@@ -46,6 +46,8 @@ It allows users to initiate escrowed payments, which are automatically released 
 - Automatically polls ChainSettle
 - Submits `settlePayment` transaction with gas estimation
 - Exposes `/status` API for frontend polling
+
+## Frontend
 
 ## Demo
 

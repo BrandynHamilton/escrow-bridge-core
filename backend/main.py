@@ -40,9 +40,9 @@ chainsettle = ChainSettleService()
 pending_ids = set()
 
 def handle_event(event):
-    print(f"🔔 New event detected: {event.event}")
+    print(f"New event detected: {event.event}")
     id_hash = event['args']['escrowId'].hex()
-    print(f"📡 Detected PaymentInitialized event: {id_hash}")
+    print(f"Detected PaymentInitialized event: {id_hash}")
     pending_ids.add(id_hash)
 
 def poll_pending_settlements():
@@ -55,10 +55,10 @@ def poll_pending_settlements():
 
             def _poll_and_finalize(id_hash_inner):
                 try:
-                    print(f"🔍 Polling ChainSettle for {id_hash_inner}")
+                    print(f"Polling ChainSettle for {id_hash_inner}")
                     id_hash_bytes = Web3.to_bytes(hexstr=id_hash_inner)
                     chainsettle.poll_settlement_status_onchain(ramp, id_hash_bytes, max_attempts=60, delay=5)
-                    print(f"✅ Finalizing payment for {id_hash_inner}")
+                    print(f"Finalizing payment for {id_hash_inner}")
 
                     base_tx = ramp.functions.settlePayment(id_hash_bytes).build_transaction({
                         "from": account.address,
@@ -84,11 +84,11 @@ def poll_pending_settlements():
                     tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
                     receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
                     if receipt.status == 1:
-                        print(f"🎉 Payment settled: {tx_hash.hex()}")
+                        print(f"Payment settled: {tx_hash.hex()}")
                     else:
-                        print(f"⚠️ Transaction failed: {tx_hash.hex()}")
+                        print(f"Transaction failed: {tx_hash.hex()}")
                 except Exception as e:
-                    print(f"❌ Error settling {id_hash_inner}: {e}")
+                    print(f"Error settling {id_hash_inner}: {e}")
                 finally:
                     with lock:
                         pending_ids.discard(id_hash_inner)

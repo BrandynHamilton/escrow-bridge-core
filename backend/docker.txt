@@ -1,0 +1,8 @@
+docker build --no-cache -t brandynham/escrowbridge .
+
+for /f %i in ('powershell -Command "Get-Date -Format yyyyMMddHHmmss"') do set TAG=v0.1.2-%i
+docker tag brandynham/escrowbridge brandynham/escrowbridge:%TAG%
+docker push brandynham/escrowbridge:%TAG%
+
+docker run -d --name escrowbridge --env-file .env -p 4028:4028 brandynham/escrowbridge:latest
+
