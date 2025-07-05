@@ -1,0 +1,11 @@
+*.env
+*.ipynb
+*.egg-info
+*.pyc
+backend/__pycache__/
+*.pyo
+*.pyd
+*.venv
+*.key
+backend/keystores/
+backend/build/

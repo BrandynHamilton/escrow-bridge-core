@@ -1,0 +1,13 @@
+# Backend
+
+cd backend
+
+uv sync
+uv run python main.py
+
+# Frontend
+
+cd frontend
+
+npm install
+npm run dev
