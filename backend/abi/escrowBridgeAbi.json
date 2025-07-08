@@ -531,25 +531,6 @@
 				"type": "bytes32"
 			}
 		],
-		"name": "getSettlementAmount",
-		"outputs": [
-			{
-				"internalType": "uint256",
-				"name": "",
-				"type": "uint256"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "bytes32",
-				"name": "idHash",
-				"type": "bytes32"
-			}
-		],
 		"name": "getSettlementCounterparty",
 		"outputs": [
 			{
@@ -602,6 +583,25 @@
 			}
 		],
 		"name": "isEscrowExpired",
+		"outputs": [
+			{
+				"internalType": "bool",
+				"name": "",
+				"type": "bool"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "bytes32",
+				"name": "idHash",
+				"type": "bytes32"
+			}
+		],
+		"name": "isFinalized",
 		"outputs": [
 			{
 				"internalType": "bool",

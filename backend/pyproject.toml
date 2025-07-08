@@ -16,7 +16,6 @@ authors = [
 dependencies = [
     "ccip-terminal>=0.1.3",
     "chainsettle",
-    "chainsettle-sdk>=0.1.2",
     "flask-cors>=5.0.0",
 ]
 

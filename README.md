@@ -1,6 +1,6 @@
-# 🌉 EscrowBridge
+# 🌉 Escrow Bridge
 
-**EscrowBridge** is a smart contract and listener system that enables trust-minimized, verifiable escrow of payments using off-chain attestations (PayPal) confirmed by a web3 oracle and finalized on-chain.
+**Escrow Bridge** is a smart contract and listener system that enables trust-minimized, verifiable escrow of payments using off-chain attestations (PayPal) confirmed by a web3 oracle and finalized on-chain.
 
 It allows users to initiate escrowed payments, which are automatically released once the oracle confirms the associated off-chain event. The backend monitors for `PaymentInitialized` events and finalizes payments once confirmed.
 
@@ -10,16 +10,16 @@ It allows users to initiate escrowed payments, which are automatically released 
 
 - **EscrowBridge.sol**: Main smart contract that manages escrow lifecycle.
 - **Python Listener**: Lightweight service that listens for on-chain events, polls web3 oracle, and triggers settlement.
-- **Frontend**: Web UI to initiate payments and view statuses.
+- **Command-Line Interface**: CLI to initiate payments and poll for completion.
 
 ## Smart Contract
 
 ### Key Features
 
-- Trustless USDC escrow with fee support
+- Trust-minimized USDC escrow with fee support
 - Integration with a web3 oracle for verified off-chain events
-- Automated release via authorized attesters or user
-- On-chain and off-chain status tracking
+- Automated release via authorized agents or manually via user
+- On-chain status tracking
 
 ### Contract: `EscrowBridge`
 
@@ -33,20 +33,26 @@ It allows users to initiate escrowed payments, which are automatically released 
 
 ## Workflow
 
-1. **User Initiates Payment** via frontend → calls `initPayment(idHash, emailHash, amount)`
+1. **User Initiates Payment** via cli → calls `initPayment(idHash, emailHash, amount)`
 2. **Backend Listener** sees the `PaymentInitialized` event
-3. **Web3 Oracle** observes off-chain event and calls `postProof(...)` on the registry
-4. **Backend Polls Registry** for confirmation via `poll_settlement_status_onchain(...)`
-5. **Settlement Triggered** via `settlePayment(idHash)` if confirmed
-6. **USDC Released** to user minus protocol fee
+3. **Web3 Oracle** observes off-chain event and updates its Settlement Registry
+4. **Settlement Triggered** via `settlePayment(idHash)` if confirmed
+5. **USDC Released** to user minus protocol and payment processor (PayPal) fees
 
 ### Features
 
 - Listens to `PaymentInitialized` events
-- Automatically polls web3 oracle
+- Automatically polls smart contract oracle for status
 - Submits `settlePayment` transaction with gas estimation
 
-## CLI
+## Deployments
+
+EscrowBridge
+| Network | Address |
+|--------------------|----------------------------------------------|
+| Base Sepolia | [0xe2241a04c7347FD6571979b1F4a41C267fcf1A15](https://sepolia.basescan.org/address/0xe2241a04c7347FD6571979b1F4a41C267fcf1A15) |
+
+## CLI & Listener
 
 ### Features
 
@@ -60,36 +66,78 @@ The `cli.py` script allows you to interact with the EscrowBridge contract direct
 - Store off-chain metadata (email, salt, recipient)
 - Poll on-chain for settlement status
 
+The `backend/main.py` script is a listener script which acts on `initPayment` events emitted by the EscrowBridge smart contract, and calls `settlePayment` onchain once the PayPal payment is confirmed by the web3 oracle.
+
+#### PayPal Credentials
+
+The web3 oracle solution will send an email to the specified email address with a link to complete a PayPal sandbox payment at this base url: `http://provider.boogle.cloud:31151/`.
+
+**The following test credentials should be used:**
+
+- email: sb-w7oqu40942591@personal.example.com
+- password: 1eh)\_t_N
+
 ### How to Use
+
+#### Prerequisites
+
+- Python 3.8+
+- pip or [`uv`](https://github.com/astral-sh/uv)
+- Internet access
 
 #### Step 1: Install Dependencies
 
-Use [`uv`](https://github.com/astral-sh/uv) to install the backend package:
+Install the backend package:
 
 ```bash
+pip install uv # Only if not already installed
 uv pip install ./backend
 ```
 
 #### Step 2: Prepare `.env`
 
-Make sure your `.env` includes the following keys:
+Copy the .env.sample file to a .env file by running this command (depending on CLI/OS):
+
+```bash
+# Unix/macOS/Linux
+cp .env.sample .env
+
+# Windows Command Prompt
+copy .env.sample .env
+
+# Windows PowerShell
+Copy-Item .env.sample .env
+```
+
+**Make sure to fill the `.env` file with an EVM account private key:**
 
 ```env
-EVM_PRIVATE_KEY=your_private_key
-ESCROW_BRIDGE_ADDRESS=0xYourEscrowBridgeAddress
+PRIVATE_KEY=your_private_key
+```
+
+Optional env variable:
+
+```env
 GATEWAY=https://base-sepolia.public.blastapi.io
 ```
 
-#### Step 3: Run the CLI
+#### Step 3: Run the Listener
 
 ```bash
-python cli.py --amount <amount> --recipient <wallet_address> --email <user_email>
+cd backend
+uv run python main.py
+```
+
+#### Step 4: Run the CLI
+
+```bash
+uv run python cli.py --amount <amount> --recipient-address <wallet_address> --email <user_email>
 ```
 
 ##### Example:
 
 ```bash
-python cli.py --amount 500 --recipient 0xabc123... --email user@example.com
+uv run python cli.py --amount 10 --recipient-address 0xabc123... --email user@example.com
 ```
 
 This will:
@@ -100,5 +148,4 @@ This will:
 4. Generate a random settlement ID + salt
 5. Compute ID hash and email hash
 6. Call `initPayment(...)` on-chain
-7. POST the salt and metadata to your backend
-8. Poll for confirmation until the escrow completes
+7. Poll for confirmation until the escrow completes

@@ -4,7 +4,6 @@ import time
 import os
 import json
 from dotenv import load_dotenv
-from chainsettle_sdk import ChainSettleService
 from escrow_bridge import network_func
 from threading import Thread, Lock
 
@@ -13,17 +12,13 @@ load_dotenv()
 active_threads = set()
 lock = Lock()
 
-# Load ABI and config
+# Load ABI 
 ABI_PATH = os.path.join('abi', 'escrowBridgeAbi.json')
 with open(ABI_PATH, 'r') as f:
-    ramp_abi = json.load(f)
-
-CONFIG_PATH = os.path.join('chainsettle_config.json')
-with open(CONFIG_PATH, 'r') as f:
-    config = json.load(f)
+    bridge_abi = json.load(f)
 
 ESCROW_BRIDGE_ADDRESS = os.getenv('ESCROW_BRIDGE_ADDRESS')
-PRIVATE_KEY = os.getenv('EVM_PRIVATE_KEY')
+PRIVATE_KEY = os.getenv('PRIVATE_KEY')
 ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY')
 network = 'base'
 w3, account = network_func(
@@ -32,8 +27,7 @@ w3, account = network_func(
     PRIVATE_KEY=PRIVATE_KEY
 )
 
-ramp = w3.eth.contract(address=ESCROW_BRIDGE_ADDRESS, abi=ramp_abi)
-chainsettle = ChainSettleService()
+bridge = w3.eth.contract(address=ESCROW_BRIDGE_ADDRESS, abi=bridge_abi)
 
 pending_ids = set()
 
@@ -53,18 +47,30 @@ def poll_pending_settlements():
 
             def _poll_and_finalize(id_hash_inner):
                 try:
-                    print(f"Polling ChainSettle for {id_hash_inner}")
+                    print(f"Polling EscrowBridge Smart Contract for {id_hash_inner}")
                     id_hash_bytes = Web3.to_bytes(hexstr=id_hash_inner)
-                    chainsettle.poll_settlement_status_onchain(ramp, id_hash_bytes, max_attempts=60, delay=5)
-                    print(f"Finalizing payment for {id_hash_inner}")
 
-                    base_tx = ramp.functions.settlePayment(id_hash_bytes).build_transaction({
+                    # Wait for settlement to be finalized onchain
+                    max_attempts = 60
+                    delay = 5
+                    for attempt in range(max_attempts):
+                        is_finalized = bridge.functions.isFinalized(id_hash_bytes).call()
+                        if is_finalized:
+                            print(f"Payment is finalized for {id_hash_inner}")
+                            break
+                        print(f"[{attempt+1}/{max_attempts}] Not finalized yet for {id_hash_inner}, retrying...")
+                        time.sleep(delay)
+                    else:
+                        print(f"Timeout waiting for finalization for {id_hash_inner}")
+                        return
+
+                    # Proceed to settlement
+                    base_tx = bridge.functions.settlePayment(id_hash_bytes).build_transaction({
                         "from": account.address,
                         "nonce": w3.eth.get_transaction_count(account.address),
                     })
 
                     gas_est = w3.eth.estimate_gas(base_tx)
-                    print(f"Gas estimate for settlePayment: {gas_est} units")
 
                     latest_block = w3.eth.get_block("latest")
                     base_fee = latest_block.get("baseFeePerGas", w3.to_wei(15, "gwei"))
@@ -81,10 +87,12 @@ def poll_pending_settlements():
                     signed_tx = account.sign_transaction(base_tx)
                     tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
                     receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+
                     if receipt.status == 1:
-                        print(f"Payment settled: {tx_hash.hex()}")
+                        print(f"✅ Payment settled: {tx_hash.hex()}")
                     else:
-                        print(f"Transaction failed: {tx_hash.hex()}")
+                        print(f"❌ Transaction failed: {tx_hash.hex()}")
+
                 except Exception as e:
                     print(f"Error settling {id_hash_inner}: {e}")
                 finally:
@@ -97,7 +105,7 @@ def poll_pending_settlements():
         time.sleep(2)
 
 def log_loop():
-    event_filter = ramp.events.PaymentInitialized.create_filter(from_block='latest')
+    event_filter = bridge.events.PaymentInitialized.create_filter(from_block='latest')
     while True:
         for event in event_filter.get_new_entries():
             handle_event(event)
