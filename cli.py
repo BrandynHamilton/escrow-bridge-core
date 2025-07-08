@@ -29,16 +29,27 @@ def main(amount, recipient_address, email):
     if not amount or not email:
         click.echo("Please provide all required parameters: amount, email.")
         return
-
+    
     # Load environment variables
-    ESCROW_BRIDGE_ADDRESS = os.getenv('ESCROW_BRIDGE_ADDRESS', "0xe2241a04c7347FD6571979b1F4a41C267fcf1A15") # Escrow Bridge contract address
-    PRIVATE_KEY = os.getenv('PRIVATE_KEY') # Private key for the account
-    ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY') # Alchemy API key for RPC access
-    CHAINSETTLE_API = os.getenv('CHAINSETTLE_API', "http://provider.boogle.cloud:31151")
+    ESCROW_BRIDGE_ADDRESS = os.getenv('ESCROW_BRIDGE_ADDRESS', "0xe2241a04c7347FD6571979b1F4a41C267fcf1A15")  # Default provided
+    PRIVATE_KEY = os.getenv('PRIVATE_KEY')
+    ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY')
+    CHAINSETTLE_API = os.getenv('CHAINSETTLE_API', "http://provider.boogle.cloud:31151")  # Default provided
 
-    if not ESCROW_BRIDGE_ADDRESS or not PRIVATE_KEY or not ALCHEMY_API_KEY or not CHAINSETTLE_API:
-        click.echo("Environment variables are not set correctly.")
-        return
+    missing_vars = []
+
+    if not ESCROW_BRIDGE_ADDRESS:
+        missing_vars.append('ESCROW_BRIDGE_ADDRESS')
+    if not PRIVATE_KEY:
+        missing_vars.append('PRIVATE_KEY')
+    if not ALCHEMY_API_KEY:
+        missing_vars.append('ALCHEMY_API_KEY')
+    if not CHAINSETTLE_API:
+        missing_vars.append('CHAINSETTLE_API')
+
+    if missing_vars:
+        click.echo(f"Missing required environment variable(s): {', '.join(missing_vars)}")
+        return  # Or sys.exit(1) if not inside a function
     
     try:
         # Initialize Web3 connection
@@ -217,6 +228,7 @@ def main(amount, recipient_address, email):
 
     for i in range(60):
         print(f"Polling for escrow status... Attempt {i + 1}/60")
+        print(f"Check {email} inbox for PayPal sandbox payment instructions.")
         time.sleep(5)
 
         pending_escrows = bridge.functions.getPendingEscrows().call({"from": account.address})

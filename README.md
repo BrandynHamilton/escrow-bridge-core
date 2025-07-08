@@ -84,8 +84,8 @@ The web3 oracle solution will send an email to the specified email address with 
 - Python 3.8+
 - pip or [`uv`](https://github.com/astral-sh/uv)
 - Internet access
-- Alchemy RPC [API Key](https://www.alchemy.com/)
-- EVM account private key with [Base Sepolia ETH](https://docs.base.org/base-chain/tools/network-faucets) for transaction fees
+- [Alchemy RPC API Key](https://www.alchemy.com/)
+- EVM account private key with enough [Base Sepolia ETH](https://docs.base.org/base-chain/tools/network-faucets) for transaction fees
 
 #### Step 1: Install Dependencies
 
