@@ -87,7 +87,14 @@ The web3 oracle solution will send an email to the specified email address with 
 - [Alchemy RPC API Key](https://www.alchemy.com/)
 - EVM account private key with enough [Base Sepolia ETH](https://docs.base.org/base-chain/tools/network-faucets) for transaction fees
 
-#### Step 1: Install Dependencies
+#### Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/BrandynHamilton/escrow-bridge-core.git
+cd escrow-bridge-core
+```
+
+#### Step 2: Install Dependencies
 
 Install the backend package:
 
@@ -96,7 +103,7 @@ pip install uv # Only if not already installed
 uv pip install ./backend
 ```
 
-#### Step 2: Prepare `.env`
+#### Step 3: Prepare `.env`
 
 Copy the .env.sample file to a .env file by running this command (depending on CLI/OS):
 
@@ -118,14 +125,14 @@ PRIVATE_KEY=your_private_key
 ALCHEMY_API_KEY=your_alchemy_api_key
 ```
 
-#### Step 3: Run the Listener
+#### Step 4: Run the Listener
 
 ```bash
 cd backend
 uv run python main.py
 ```
 
-#### Step 4: Run the CLI
+#### Step 5: Run the CLI
 
 ```bash
 uv run python cli.py --amount <amount> --recipient-address <wallet_address> --email <user_email>
