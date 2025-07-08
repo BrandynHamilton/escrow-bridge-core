@@ -17,7 +17,7 @@ ABI_PATH = os.path.join('abi', 'escrowBridgeAbi.json')
 with open(ABI_PATH, 'r') as f:
     bridge_abi = json.load(f)
 
-ESCROW_BRIDGE_ADDRESS = os.getenv('ESCROW_BRIDGE_ADDRESS')
+ESCROW_BRIDGE_ADDRESS = os.getenv('ESCROW_BRIDGE_ADDRESS', "0xe2241a04c7347FD6571979b1F4a41C267fcf1A15")
 PRIVATE_KEY = os.getenv('PRIVATE_KEY')
 ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY')
 network = 'base'

@@ -84,6 +84,8 @@ The web3 oracle solution will send an email to the specified email address with 
 - Python 3.8+
 - pip or [`uv`](https://github.com/astral-sh/uv)
 - Internet access
+- Alchemy RPC [API Key](https://www.alchemy.com/)
+- EVM account private key with [Base Sepolia ETH](https://docs.base.org/base-chain/tools/network-faucets) for transaction fees
 
 #### Step 1: Install Dependencies
 
@@ -113,12 +115,7 @@ Copy-Item .env.sample .env
 
 ```env
 PRIVATE_KEY=your_private_key
-```
-
-Optional env variable:
-
-```env
-GATEWAY=https://base-sepolia.public.blastapi.io
+ALCHEMY_API_KEY=your_alchemy_api_key
 ```
 
 #### Step 3: Run the Listener
@@ -133,6 +130,8 @@ uv run python main.py
 ```bash
 uv run python cli.py --amount <amount> --recipient-address <wallet_address> --email <user_email>
 ```
+
+If `--recipient-address` is left empty, it defaults to the msg.sender (connected EVM account)
 
 ##### Example:
 

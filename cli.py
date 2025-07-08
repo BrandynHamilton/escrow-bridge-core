@@ -6,6 +6,7 @@ import json
 import secrets
 import time
 import requests
+from escrow_bridge import network_func
 
 load_dotenv()
 
@@ -20,6 +21,7 @@ def main(amount, recipient_address, email):
     """
     Main function to handle the CLI commands for the Escrow Bridge.
     Enables users to request USDC by providing the amount, recipient address, and email.
+    If recipient address is not provided, it defaults to the sender's address.
 
     Usage: python cli.py --amount <amount> --recipient <recipient> --email <email>
     Example: python cli.py --amount 1000 --recipient 0xRecipientAddress --email joe@gmail.com
@@ -29,38 +31,25 @@ def main(amount, recipient_address, email):
         return
 
     # Load environment variables
-    ESCROW_BRIDGE_ADDRESS = os.getenv('ESCROW_BRIDGE_ADDRESS', "0xe2241a04c7347FD6571979b1F4a41C267fcf1A15")
+    ESCROW_BRIDGE_ADDRESS = os.getenv('ESCROW_BRIDGE_ADDRESS', "0xe2241a04c7347FD6571979b1F4a41C267fcf1A15") # Escrow Bridge contract address
     PRIVATE_KEY = os.getenv('PRIVATE_KEY') # Private key for the account
-    GATEWAY = os.getenv('GATEWAY', "https://base-sepolia.public.blastapi.io") # Base sepolia RPC url
+    ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY') # Alchemy API key for RPC access
     CHAINSETTLE_API = os.getenv('CHAINSETTLE_API', "http://provider.boogle.cloud:31151")
 
-    if not ESCROW_BRIDGE_ADDRESS or not PRIVATE_KEY or not GATEWAY or not CHAINSETTLE_API:
+    if not ESCROW_BRIDGE_ADDRESS or not PRIVATE_KEY or not ALCHEMY_API_KEY or not CHAINSETTLE_API:
         click.echo("Environment variables are not set correctly.")
         return
     
     try:
-    
-        w3 = Web3(Web3.HTTPProvider(GATEWAY))
-
-        account = None
-
-        if w3.is_connected():
-            try:
-                account = w3.eth.account.from_key(PRIVATE_KEY)
-                try:
-                    latest_block = w3.eth.get_block('latest')['number']
-                except:
-                    latest_block = None
-                print(f"Connected to base sepolia with account {account} - Block {latest_block}")
-            except Exception as e:
-                print(f"Connected but failed to fetch block. Error: {e}")
-        else:
-            print(f"Failed to connect to base sepolia")
+        # Initialize Web3 connection
+        w3, account = network_func(
+            network='base',
+            ALCHEMY_API_KEY=ALCHEMY_API_KEY,
+            PRIVATE_KEY=PRIVATE_KEY
+        )
     except Exception as e:
-        print(f"Error connecting to the network: {e}")
+        click.echo(f"Error connecting to the network: {e}")
     
-    print(f"Connected to {w3.eth.chain_id} with account {account.address}")
-
     # Load the Escrow Bridge contract
     with open(ABI_PATH, 'r') as f:
         bridge_abi = json.load(f)
@@ -203,8 +192,8 @@ def main(amount, recipient_address, email):
     print(f"✓ initPayment({settlement_id}, {amount:.6f} USDC) submitted → Tx: {h_init.hex()}")
     print(f"→ View on Explorer: https://sepolia.basescan.org/tx/{'0x'+h_init.hex()}")
 
-    # 10) Store the salt and other details in the backend service
-    print("Storing salt and payment details in the backend service...")
+    # 10) Store the salt and other offchain data in the web3 oracle backend service
+    print("Storing salt and payment details in the web3 oracle backend service...")
 
     r = requests.post(url=F"{CHAINSETTLE_API}/api/store_salt", json={
         "id_hash": id_hash,
