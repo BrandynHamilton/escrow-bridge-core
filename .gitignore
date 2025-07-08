@@ -9,3 +9,4 @@ backend/__pycache__/
 *.key
 backend/keystores/
 backend/build/
+notes/
