@@ -34,7 +34,7 @@ def main(amount, recipient_address, email):
     ESCROW_BRIDGE_ADDRESS = os.getenv('ESCROW_BRIDGE_ADDRESS', "0xe2241a04c7347FD6571979b1F4a41C267fcf1A15")  # Default provided
     PRIVATE_KEY = os.getenv('PRIVATE_KEY')
     ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY')
-    CHAINSETTLE_API = os.getenv('CHAINSETTLE_API', "http://provider.boogle.cloud:31151")  # Default provided
+    CHAINSETTLE_API = os.getenv('CHAINSETTLE_API', "https://app.chainsettle.tech")  # Default provided
 
     missing_vars = []
 

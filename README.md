@@ -70,7 +70,7 @@ The `backend/main.py` script is a listener script which acts on `initPayment` ev
 
 #### PayPal Credentials
 
-The web3 oracle solution will send an email to the specified email address with a link to complete a PayPal sandbox payment at this base url: `http://provider.boogle.cloud:31151/`.
+The web3 oracle solution will send an email to the specified email address with a link to complete a PayPal sandbox payment at this base url: [https://app.chainsettle.tech/](https://app.chainsettle.tech/).
 
 **The following test credentials should be used:**
 
