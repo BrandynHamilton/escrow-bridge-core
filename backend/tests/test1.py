@@ -1,11 +1,12 @@
-from chainsettle import network_func, generate_salt, ZERO_ADDRESS, keccak256
-from chainsettle_sdk import ChainSettleService
+import webbrowser
+from escrow_bridge import network_func, generate_salt
 import os
 from typing import Dict, Optional, List
 
 from dotenv import load_dotenv
 import time
 import json
+import requests
 
 load_dotenv()
 
@@ -15,13 +16,13 @@ load_dotenv()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 CONFIG_PATH = os.path.join(BASE_DIR, 'chainsettle_config.json')
-ABI_PATH = os.path.join(BASE_DIR, 'abi', 'escrowBridgeAbi.json')
+artifact_path = os.path.join(BASE_DIR, '..', 'contracts', 'out', 'EscrowBridge.sol', 'EscrowBridge.json')
 
 with open(CONFIG_PATH, "r") as f:
     config = json.load(f)
 
-with open(ABI_PATH, "r") as f:
-    ramp_abi = json.load(f)
+with open(artifact_path, "r") as f:
+    ramp_abi = json.load(f)['abi']
 
 MAX_256 = 2**256 - 1
 
@@ -29,6 +30,7 @@ SETTLEMENT_RAMP_ADDRESS = os.getenv('ESCROW_BRIDGE_ADDRESS')
 print(f"Using SettlementRamp address: {SETTLEMENT_RAMP_ADDRESS}")
 
 THIRD_PARTY_KEY = os.getenv('THIRD_PARTY_KEY')
+LISTENER_URL = os.getenv('LISTENER_URL')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # A minimal ERC20 ABI containing balanceOf, decimals, and approve
@@ -101,7 +103,7 @@ def poll_settlement_status_onchain(ramp_contract, id_hash, max_attempts=60, dela
     else:
         print("Polling timed out after 5 minutes.")
 
-def main(amount: float, user_email: str,  settlement_id: Optional[str] = None,):
+def main(amount: float, settlement_id: Optional[str] = None,):
     """
     1) Connect to Base
     2) Check SettlementRamp’s USDC balance (in raw units)
@@ -114,10 +116,12 @@ def main(amount: float, user_email: str,  settlement_id: Optional[str] = None,):
         settlement_id = secrets.token_hex(4)
 
     network = 'base'
+    settlement_type = 'paypal'
     PRIVATE_KEY = os.getenv('EVM_PRIVATE_KEY')
     ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY')
-    REGISTRY_ADDRESS = config[network]['registry_addresses']['SettlementRegistry']
-    REGISTRY_ABI = config[network]['abis']['SettlementRegistry']
+    registry_address = config[network]['registry_addresses'][settlement_type]
+    REGISTRY_ADDRESS = registry_address
+    registry_abi = config[network]['abis'][settlement_type]
 
     EXPL_URL = config[network]['explorer_url']
     w3, account = network_func(
@@ -134,7 +138,7 @@ def main(amount: float, user_email: str,  settlement_id: Optional[str] = None,):
 
     print(f'Third Party EOA = {third_party_account.address}')
 
-    settlement_registry = w3.eth.contract(address=REGISTRY_ADDRESS, abi=REGISTRY_ABI)
+    settlement_registry = w3.eth.contract(address=registry_address, abi=registry_abi)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Instantiate the SettlementRamp contract
@@ -155,7 +159,6 @@ def main(amount: float, user_email: str,  settlement_id: Optional[str] = None,):
             f"❌ SettlementRamp.settlementRegistry() = {onchain_reg_address} "
             f"does not match config value {REGISTRY_ADDRESS}."
         )
-
 
     # 1) Check the “minPaymentAmount” and “maxPaymentAmount” (these are stored as raw USDC units)
     min_raw = ramp.functions.minPaymentAmount().call()
@@ -251,8 +254,6 @@ def main(amount: float, user_email: str,  settlement_id: Optional[str] = None,):
 
         time.sleep(10)  # Wait for the approval to be mined
 
-        
-
         # 10.c) Double-check allowance
         current_allowance = erc20.functions.allowance(account.address, SETTLEMENT_RAMP_ADDRESS).call()
         print(f"🔍 Post-approve: allowance = {current_allowance} (need ≥ {top_up})")
@@ -322,32 +323,26 @@ def main(amount: float, user_email: str,  settlement_id: Optional[str] = None,):
         [salt, settlement_id]
     )
 
-    user_email_hash_bytes = w3.solidity_keccak(
-        ["bytes32", "string"],
-        [salt, user_email]
-    )
-
     id_hash = id_hash_bytes.hex()
     print(f"> Computed id_hash = {id_hash}")
 
     print(f'raw_amount_needed = {raw_amount_needed} (≈ {amount:.6f} USDC)')
 
-    balance = erc20.functions.balanceOf(third_party_account.address).call()
-    human_balance = balance / (10 ** token_decimals)
-    print(f"User's USDC balance before settlement: {balance} raw units "
-          f"(≈ {human_balance:.6f} USDC)")
+    # balance = erc20.functions.balanceOf(third_party_account.address).call()
+    # human_balance = balance / (10 ** token_decimals)
+    # print(f"User's USDC balance before settlement: {balance} raw units "
+    #       f"(≈ {human_balance:.6f} USDC)")
     
-    # 11.a) Check if the user has enough USDC to cover the settlement
-    if balance < raw_amount_needed:
-        raise Exception(
-            f"❌ User's USDC balance ({human_balance:.6f} USDC) is less than required "
-            f"{amount:.6f} USDC ({raw_amount_needed} raw units).")
+    # # 11.a) Check if the user has enough USDC to cover the settlement
+    # if balance < raw_amount_needed:
+    #     raise Exception(
+    #         f"❌ User's USDC balance ({human_balance:.6f} USDC) is less than required "
+    #         f"{amount:.6f} USDC ({raw_amount_needed} raw units).")
 
     time.sleep(5)  # Wait for the approval to be mined
           
     base_tx = third_party_ramp.functions.initPayment(
         id_hash_bytes,
-        user_email_hash_bytes,
         raw_amount_needed
     ).build_transaction({
         "from": third_party_account.address,
@@ -382,19 +377,33 @@ def main(amount: float, user_email: str,  settlement_id: Optional[str] = None,):
     # The frontend would need to do this, but we do it here for demonstration.
     # Note: The ChainSettleService is a wrapper around the ChainSettle API.
     # ─────────────────────────────────────────────────────────────────────────
-    chainsettle = ChainSettleService()
+    payload = {
+        "id_hash": id_hash,
+        "salt": salt_hex,
+        "settlement_id": settlement_id,
+        "recipient_email": recipient_email,
+    }
+    r = requests.post(f"{os.getenv('CHAINSETTLE_API_URL')}/settlement/register_settlement", 
+                     json=payload)
+    r.raise_for_status()
+    resp = r.json()
+    if 'user_url' in resp.get('settlement_info', {}):
+        print(f"✓ User URL: {resp['settlement_info']['user_url']}")
+        webbrowser.open(resp['settlement_info']['user_url'])
+    else:
+        print("⚠️ User URL not found in response.")
 
-    resp = chainsettle.store_salt(
-        id_hash=id_hash,
-        salt=salt_hex,
-        email=user_email,
-        recipient_email=recipient_email,
-    )
-    print(f"✓ Salt stored: {json.dumps(resp, indent=2)}")
+    # chainsettle = ChainSettleService()
+
+    # resp = chainsettle.store_salt(
+    #     id_hash=id_hash,
+    #     salt=salt_hex,
+    #     email=user_email,
+    #     recipient_email=recipient_email,
+    # )
+    print(f"✓ Registered Offchain: {json.dumps(resp, indent=2)}")
 
     # We can also poll settlement activity directly in the smart contract
-    import requests
-
     def poll_for_status(id_hash: str, max_attempts: int = 60, delay: int = 5):
         """
         Polls the Escrow Bridge API for settlement status.
@@ -402,9 +411,8 @@ def main(amount: float, user_email: str,  settlement_id: Optional[str] = None,):
         print(f"Polling Escrow Bridge API for settlement status of {id_hash}...")
         for attempt in range(1, max_attempts + 1):
             try:
-                r = requests.post(
-                    f"http://localhost:4028/status", json={
-                        "escrowId": id_hash}
+                r = requests.get(
+                    f"{LISTENER_URL}/status/{id_hash}"
                 )
                 r.raise_for_status()
                 resp = r.json()
@@ -432,12 +440,10 @@ def main(amount: float, user_email: str,  settlement_id: Optional[str] = None,):
 
 if __name__ == "__main__":
     import secrets
-    print("Running Settlement Ramp Test")
+    print("Running Escrow Bridge Test")
     # settlement_id = secrets.token_hex(4) # Generate a random settlement ID
-    amount = 1.0  # Amount in USDC to settle
-    user_email = "brandynham1120@gmail.com"
+    amount = 10.0  # Amount in USDC to settle
     main(
         # settlement_id=settlement_id,
         amount=amount,
-        user_email=user_email,
     )

@@ -1,0 +1,13 @@
+services:
+  escrow-bridge-listener:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: escrow-bridge-listener
+    container_name: escrow-bridge-listener
+    env_file:
+      - deploy.env
+    ports:
+      - "4284:4284"
+
+    

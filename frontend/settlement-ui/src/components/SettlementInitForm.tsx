@@ -10,7 +10,7 @@ import RAMP_ABI from "@/abi/EscrowBridge.json";
 
 dotenv.config();
 
-const BRIDGE_ADDRESS = process.env.BRIDGE_ADDRESS || "0x0460f6f3C3448Cda1E9C6d54ebFA99D7C8f0C168"; 
+const BRIDGE_ADDRESS = process.env.BRIDGE_ADDRESS || "0x51966c1468DedD9de6Cf1378ab0A2234C5341c1D"; 
 
 const CHAINSETTLE_API = process.env.CHAINSETTLE_API || "http://localhost:5045";
 const ESCROW_BRIDGE_API = process.env.ESCROW_BRIDGE_API || "http://localhost:4028";
@@ -29,6 +29,7 @@ export default function SettlementInitForm() {
   const [userUsdcBalance, setUserUsdcBalance] = useState<string | null>(null);
   const [contractUsdcBalance, setContractUsdcBalance] = useState<string | null>(null);
   const [freeBalance, setFreeBalance] = useState<string | null>(null);
+  const [recipient, setRecipient] = useState("");
 
   const generateSalt = () =>
     "0x" + ethers.utils.hexlify(ethers.utils.randomBytes(32)).slice(2);
@@ -95,7 +96,6 @@ export default function SettlementInitForm() {
 
       const rawAmount = ethers.utils.parseUnits(amount, decimals);
 
-      // 🔒 Validate free balance
       const rawFreeBalance = await contract.getFreeBalance();
 	  console.log('rawFreeBalance:',rawFreeBalance)
       if (rawFreeBalance.lt(rawAmount)) {
@@ -122,8 +122,24 @@ export default function SettlementInitForm() {
       });
 
 	  console.log('at initPayment')
+    console.log('recipient:', recipient)
 
-      const tx = await contract.initPayment(idHash, userEmailHash, rawAmount);
+      let tx;
+      if (recipient && ethers.utils.isAddress(recipient)) {
+        tx = await contract["initPayment(bytes32,bytes32,uint256,address)"](
+          idHash,
+          userEmailHash,
+          rawAmount,
+          recipient
+        );
+      } else {
+        tx = await contract["initPayment(bytes32,bytes32,uint256)"](
+          idHash,
+          userEmailHash,
+          rawAmount
+        );
+      }
+
 	  console.log(' after initPayment')
       await tx.wait();
       setStatus("Transaction confirmed! Waiting for settlement...");
@@ -189,6 +205,11 @@ export default function SettlementInitForm() {
           type="number"
           step="0.01"
           required
+        />
+        <Input
+          placeholder="(Optional) Recipient Address"
+          value={recipient}
+          onChange={(e) => setRecipient(e.target.value)}
         />
         <Button type="submit">Submit Payment</Button>
       </form>

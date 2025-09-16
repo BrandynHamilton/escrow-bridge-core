@@ -8,47 +8,58 @@ It allows users to initiate escrowed payments, which are automatically released 
 
 ### Core Components
 
-- **EscrowBridge.sol**: Main smart contract that manages escrow lifecycle.
-- **Python Listener**: Flask service that listens for on-chain events, polls ChainSettle, and triggers settlement.
-- **Frontend**: Web UI to initiate payments and view statuses.
+- **EscrowBridge.sol**: ERC20-compatible smart contract that manages escrow lifecycle.
+- **EscrowBridgeETH.sol**: Native gas token compatible smart contract that manages escrow lifecycle.
+- **Python Listener**: FastAPI service that listens for on-chain events, polls escrow completion, triggers settlement, and exposes API endpoints.
+- **CLI**: Command line interface to initiate payments and view statuses.
 
-## Smart Contract
+---
 
-### Key Features
+## Documentation
 
-- Trustless USDC escrow with fee support
-- Integration with ChainSettle for verified off-chain events
-- Automated release via authorized attesters or user
-- On-chain and off-chain status tracking
+More in-depth documentation can be found at [docs.escrowbridge.xyz](https://docs.escrowbridge.xyz/)
 
-### Contract: `EscrowBridge`
+---
 
-| Function                  | Description                                          |
-| ------------------------- | ---------------------------------------------------- |
-| `initPayment()`           | Begins a new escrow, reserves USDC in contract       |
-| `settlePayment()`         | Settles escrowed payment after ChainSettle confirms  |
-| `withdraw()`              | Owner-only withdrawal of free (non-escrowed) USDC    |
-| `addAuthorizedAttester()` | Grants settlement rights to backend                  |
-| `getFreeBalance()`        | Returns contract balance minus total escrowed amount |
+## Demos
 
-## Workflow
+The `demos` directory has videos showing the workflow for both automated and manual workflows.
 
-1. **User Initiates Payment** via frontend → calls `initPayment(idHash, emailHash, amount)`
-2. **Backend Listener** sees the `PaymentInitialized` event
-3. **ChainSettle Oracle** observes off-chain event and calls `postProof(...)` on the registry
-4. **Backend Polls Registry** for confirmation via `poll_settlement_status_onchain(...)`
-5. **Settlement Triggered** via `settlePayment(idHash)` if confirmed
-6. **USDC Released** to user minus protocol fee
+---
 
-### Features
+## Running the Listener/API
 
-- Listens to `PaymentInitialized` events
-- Automatically polls ChainSettle
-- Submits `settlePayment` transaction with gas estimation
-- Exposes `/status` API for frontend polling
+### Requirements
 
-## Frontend
+- [Docker](https://www.docker.com/get-started/)
 
-## Demo
+### 1. Environment Variables
 
-[Escrow Bridge MVP Demo](https://drive.google.com/file/d/1_XpgDnOR1mqEqa-00UZo1b7oL_78fjQZ/view?usp=sharing)
+Create a deploy.env file in the project root with the following variables:
+
+```
+EVM_PRIVATE_KEY=
+ACCOUNT_ADDRESS=
+TENDERLY_API_KEY=
+
+```
+
+### 2. Run the Server
+
+Run this command from the project root
+
+```bash
+
+docker-compose build && docker-compose up
+
+```
+
+### 3. Dashboard
+
+Open http://localhost:4284/ to see the listener dashboard.
+
+### 4. API Endpoints
+
+Open http://localhost:4284/docs to see the available endpoints.
+
+---

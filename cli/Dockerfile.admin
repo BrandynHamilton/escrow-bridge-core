@@ -1,0 +1,15 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Copy backend code (CLI lives here)
+COPY backend/ ./backend
+COPY contracts/ ./contracts
+
+RUN apt-get update && apt-get install -y bash
+
+# Install backend & CLI dependencies
+RUN pip install --upgrade pip && pip install -e ./backend
+
+# Default entrypoint is the admin CLI
+ENTRYPOINT ["python", "-m", "backend.admin_cli"]

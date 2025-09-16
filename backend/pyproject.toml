@@ -14,13 +14,18 @@ authors = [
     { name = "Brandyn Hamilton", email = "brandynham1120@gmail.com"}
 ]
 dependencies = [
-    "chainsettle",
-    "chainsettle-sdk>=0.1.2",
-    "flask-cors>=5.0.0",
+    "click>=8.1.8",
+    "diskcache>=5.6.3",
+    "fastapi>=0.103.2",
+    "httpx>=0.24.1",
+    "jinja2>=3.1.6",
+    "python-dotenv>=0.21.1",
+    "uvicorn>=0.22.0",
+    "web3>=5.3.1",
+    "chartengineer==0.1.5",
+    "apscheduler>=3.10.4",
+    "rich>=13.8.1",
 ]
 
 [tool.setuptools.packages.find]
 include = ["escrow_bridge", "escrow_bridge.*"]
-
-[tool.uv.sources]
-chainsettle = { path = "../../chainsettle/core/backend" }
