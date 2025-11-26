@@ -1,115 +1,373 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>📻 Escrow Bridge Listener Dashboard</title>
+<title>Escrow Bridge Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.plot.ly/plotly-3.0.1.min.js"></script>
 <style>
+  :root {
+    /* Light mode (cream/white) */
+    --bg-primary: #faf9f7;
+    --bg-secondary: #ffffff;
+    --bg-card: #ffffff;
+    --text-primary: #1a1a2e;
+    --text-secondary: #4a4a68;
+    --text-muted: #7c7c9a;
+    --border-color: rgba(0,0,0,0.08);
+    --accent-primary: #3b82f6;
+    --accent-secondary: #272bb4;
+    --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #4f46e5 50%, #272bb4 100%);
+    --card-shadow: 0 4px 20px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
+    --card-hover-shadow: 0 8px 30px rgba(64,237,255,0.15), 0 2px 8px rgba(0,0,0,0.08);
+    --glow: 0 0 40px rgba(64,237,255,0.25);
+  }
+
+  [data-theme="dark"] {
+    --bg-primary: #0a0f14;
+    --bg-secondary: #121a24;
+    --bg-card: #0f171f;
+    --text-primary: #f0f5f9;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --border-color: rgba(255,255,255,0.08);
+    --accent-primary: #3b82f6;
+    --accent-secondary: #272bb4;
+    --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #4f46e5 50%, #272bb4 100%);
+    --card-shadow: 0 4px 20px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.5);
+    --card-hover-shadow: 0 8px 30px rgba(64,237,255,0.2), 0 2px 8px rgba(0,0,0,0.3);
+    --glow: 0 0 60px rgba(64,237,255,0.3);
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
   body {
-    font-family: system-ui, sans-serif;
-    margin: 1.5rem;
-    text-align: center;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 2rem;
+    transition: background 0.3s ease, color 0.3s ease;
+  }
+
+  /* Header */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 1200px;
+    margin: 0 auto 3rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .logo-icon {
+    width: 40px;
+    height: 40px;
+    background: var(--accent-gradient);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    box-shadow: var(--glow);
   }
 
   h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    background: var(--accent-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Theme Toggle */
+  .theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--bg-card);
+    padding: 0.5rem 1rem;
+    border-radius: 50px;
+    border: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+
+  .theme-toggle:hover {
+    box-shadow: var(--card-shadow);
+  }
+
+  .theme-toggle span {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+  }
+
+  .toggle-switch {
+    width: 44px;
+    height: 24px;
+    background: var(--bg-secondary);
+    border-radius: 12px;
+    position: relative;
+    transition: background 0.3s ease;
+    border: 1px solid var(--border-color);
+  }
+
+  .toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    background: var(--accent-gradient);
+    border-radius: 50%;
+    transition: transform 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  }
+
+  [data-theme="dark"] .toggle-switch::after {
+    transform: translateX(20px);
+  }
+
+  /* Main Container */
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  /* Section Titles */
+  .section-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
     margin-bottom: 1rem;
+    text-align: left;
+  }
+
+  /* Info Row */
+  .info-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    margin-bottom: 2.5rem;
+  }
+
+  /* Cards */
+  .rate-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 1.5rem;
+    text-align: left;
+    box-shadow: var(--card-shadow);
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .rate-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--accent-gradient);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .rate-card:hover {
+    box-shadow: var(--card-hover-shadow);
+    transform: translateY(-2px);
+  }
+
+  .rate-card:hover::before {
+    opacity: 1;
+  }
+
+  .rate-card h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .rate-card h3::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    background: var(--accent-gradient);
+    border-radius: 50%;
+  }
+
+  .rate-card p {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin: 0.5rem 0;
+    line-height: 1.5;
+  }
+
+  .rate-card p strong {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+
+  .rate-card small {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    display: block;
+    word-break: break-all;
+    background: var(--bg-secondary);
+    padding: 0.5rem;
+    border-radius: 6px;
+    margin-top: 0.5rem;
+  }
+
+  /* Pending Section */
+  #pending-ids-section {
+    margin-bottom: 2.5rem;
+  }
+
+  #pending-ids-section h2 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+    text-align: left;
+  }
+
+  #pending-ids-display {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  #pending-ids-display p {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+  }
+
+  /* Charts Section */
+  #charts-section {
+    margin-bottom: 2.5rem;
+  }
+
+  .charts-grid {
+    display: flex;
+    justify-content: center;
   }
 
   .chart-container {
-    display: inline-block;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 1.5rem;
     width: 100%;
-    max-width: 600px;
-    height: 400px;
-    margin: 50px; /* buffer between charts */
-    vertical-align: top;
+    max-width: 800px;
+    box-shadow: var(--card-shadow);
   }
 
   .chart-inner {
     width: 100%;
-    height: 100%;
+    height: 350px;
+    border-radius: 8px;
+    overflow: hidden;
   }
 
   .chart-label {
-    margin-top: 8px;
-    font-size: 0.95rem;
+    margin-top: 1rem;
+    font-size: 0.875rem;
     font-weight: 500;
-    color: #333;
-  }
-  #rates-display {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 1rem;
-    margin-bottom: 2rem;
-  }
-  .rate-card {
-    border: 1px solid #ccc;
-    border-radius: 10px;
-    padding: 1rem;
-    background: #f9f9f9;
-    width: 250px;
-    text-align: left;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    overflow-wrap: break-word;   /* allow long words to wrap */
-    word-break: break-word;      /* ensure addresses wrap */
-  }
-  .rate-card h3 {
-    margin: 0 0 0.5rem 0;
-    font-size: 1.1rem;
-    color: #333;
-  }
-  .rate-card p {
-    margin: 0.25rem 0;
-    font-size: 0.9rem;
-  }
-  .rate-card small {
-    color: #666;
-    font-size: 0.75rem;
-    display: block;              /* force it onto its own line */
-    overflow-wrap: break-word;
-  }
-  .charts-grid {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 2rem;
+    color: var(--text-secondary);
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
   }
 
+  /* Footer */
   footer {
+    max-width: 1200px;
+    margin: 3rem auto 0;
+    padding: 1.5rem 0;
+    border-top: 1px solid var(--border-color);
     text-align: center;
-    margin-top: 20px;
-    padding: 10px;
-    background-color: #333;
-    color: #fff;
   }
-  #escrow-time-container {
-    display: flex;
-    justify-content: center;
-    margin-bottom: 2rem;
+
+  footer p {
+    font-size: 0.875rem;
+    color: var(--text-muted);
   }
+
   .email-link {
-    color: #ff6600;   /* pick any color (here orange) */
-    text-decoration: none;  /* remove underline */
+    color: var(--accent-primary);
+    text-decoration: none;
+    font-weight: 500;
+    transition: color 0.2s ease;
   }
+
   .email-link:hover {
-    color: #cc5200;   /* darker on hover */
-    text-decoration: underline;
+    color: var(--accent-secondary);
   }
-  #pending-ids-display {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center; /* center horizontally */
-    gap: 1rem;               /* spacing between cards */
-    margin-bottom: 2rem;
+
+  /* Status Indicator */
+  .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: #10b981;
+    border-radius: 50%;
+    margin-right: 0.5rem;
+    animation: pulse 2s infinite;
   }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* Responsive */
   @media (max-width: 768px) {
-    .charts-grid {
+    body {
+      padding: 1rem;
+    }
+
+    header {
       flex-direction: column;
-      align-items: center;
+      gap: 1rem;
+      text-align: center;
+    }
+
+    .info-row {
+      grid-template-columns: 1fr;
+    }
+
+    h1 {
+      font-size: 1.25rem;
     }
   }
-
 </style>
 
 <script>
@@ -118,20 +376,43 @@ function plotCharts() {
     .then(r => r.json())
     .then(payload => {
       const fig1 = JSON.parse(payload.graph_1);
-      const fig2 = JSON.parse(payload.graph_2);
+      const theme = document.documentElement.getAttribute('data-theme');
+      const isDark = theme === 'dark';
 
       document.getElementById("chart1-label").textContent =
-        `BlockDAG Testnet Available Balance: ${payload.bdag_balance} BDAG`;
-      document.getElementById("chart2-label").textContent =
-        `Base Sepolia Available Balance: ${payload.base_usdc_balance} USDC`;
+        `Available Balance: ${Number(payload.bdag_balance).toFixed(4)} USDC`;
 
-      Plotly.newPlot("chart1-inner", fig1.data, {...fig1.layout, autosize:true}, {responsive:true});
-      Plotly.newPlot("chart2-inner", fig2.data, {...fig2.layout, autosize:true}, {responsive:true});
+      if (fig1.data && fig1.data.length > 0) {
+        // Apply theme colors to chart
+        const themedLayout = {
+          ...fig1.layout,
+          autosize: true,
+          paper_bgcolor: isDark ? '#16162a' : '#ffffff',
+          plot_bgcolor: isDark ? '#16162a' : '#ffffff',
+          font: { color: isDark ? '#f0f0f5' : '#1a1a2e', family: 'Inter' },
+          xaxis: { ...fig1.layout?.xaxis, gridcolor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' },
+          yaxis: { ...fig1.layout?.yaxis, gridcolor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' },
+          margin: { t: 40, r: 20, b: 40, l: 60 }
+        };
+
+        // Apply gradient colors to bars
+        if (fig1.data[0]) {
+          fig1.data[0].marker = {
+            color: isDark ? '#4f46e5' : '#3b82f6',
+            line: { color: isDark ? '#3b82f6' : '#272bb4', width: 1 }
+          };
+        }
+
+        Plotly.newPlot("chart1-inner", fig1.data, themedLayout, {responsive: true, displayModeBar: false});
+      } else {
+        document.getElementById("chart1-inner").innerHTML =
+          '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);">No chart data available yet</div>';
+      }
     })
     .catch(err => {
       console.error("Error loading charts:", err);
-      document.getElementById("chart1-inner").textContent = "Error loading chart 1";
-      document.getElementById("chart2-inner").textContent = "Error loading chart 2";
+      document.getElementById("chart1-inner").innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);">Error loading chart</div>';
     });
 }
 
@@ -142,19 +423,16 @@ function fetchRates() {
       console.log("Exchange rates:", data);
 
       const container = document.getElementById("rates-display");
-      container.innerHTML = ""; // clear previous
+      container.innerHTML = "";
 
       const rates = data.exchange_rate;
       for (const [network, info] of Object.entries(rates)) {
-        const div = document.createElement("div");
-        div.className = "rate-card";
-        div.innerHTML = `
-          <h3>${network} (chainId: ${info.chain_id})</h3>
-          <p><strong>Rate:</strong> $${info.rate}</p>
-          <p><strong>Token:</strong> ${info.token.symbol} (${info.token.decimals} decimals)</p>
-          <p><small>${info.token.address}</small></p>
+        container.innerHTML += `
+          <p><strong>${network}</strong></p>
+          <p>Chain ID: ${info.chain_id}</p>
+          <p>Rate: $${info.rate}</p>
+          <p>Token: ${info.token.symbol} (${info.token.decimals} dec)</p>
         `;
-        container.appendChild(div);
       }
     })
     .catch(err => console.error("Error fetching rates:", err));
@@ -181,19 +459,15 @@ function fetchNetworkAddresses() {
       console.log("Escrow bridge config:", config);
 
       const container = document.getElementById("network-addresses");
-      if (!container) return; // skip if container not in HTML
+      if (!container) return;
 
-      container.innerHTML = ""; // clear previous content
+      container.innerHTML = "";
 
       for (const [network, info] of Object.entries(config)) {
-        const div = document.createElement("div");
-        div.className = "rate-card";
-        div.innerHTML = `
-          <h3>${network}</h3>
-          <p><strong>Bridge Address:</strong></p>
+        container.innerHTML += `
+          <p><strong>${network}</strong></p>
           <small>${info.address}</small>
         `;
-        container.appendChild(div);
       }
     })
     .catch(err => console.error("Error fetching network addresses:", err));
@@ -232,6 +506,45 @@ function fetchPendingIds() {
     });
 }
 
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme');
+  const next = current === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+
+  // Update chart colors for theme
+  updateChartTheme(next);
+}
+
+function updateChartTheme(theme) {
+  const chartEl = document.getElementById('chart1-inner');
+  if (chartEl && chartEl.data) {
+    const bgColor = theme === 'dark' ? '#16162a' : '#ffffff';
+    const textColor = theme === 'dark' ? '#f0f0f5' : '#1a1a2e';
+    const gridColor = theme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+
+    Plotly.relayout('chart1-inner', {
+      'paper_bgcolor': bgColor,
+      'plot_bgcolor': bgColor,
+      'font.color': textColor,
+      'xaxis.gridcolor': gridColor,
+      'yaxis.gridcolor': gridColor
+    });
+  }
+}
+
+function initTheme() {
+  const saved = localStorage.getItem('theme');
+  if (saved) {
+    document.documentElement.setAttribute('data-theme', saved);
+  } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+}
+
+initTheme();
+
 setInterval(fetchRates, 60000 * 30); // poll every 30 minutes
 setInterval(fetchPendingIds, 30000);
 window.addEventListener("load", () => {
@@ -246,51 +559,59 @@ window.addEventListener("load", () => {
 
 <body>
   <header>
-    <h1>📻 Escrow Bridge Listener Dashboard</h1>
+    <div class="logo">
+      <div class="logo-icon">🌉</div>
+      <h1>Escrow Bridge</h1>
+    </div>
+    <div class="theme-toggle" onclick="toggleTheme()">
+      <span>☀️</span>
+      <div class="toggle-switch"></div>
+      <span>🌙</span>
+    </div>
   </header>
 
-  <section id="network-section">
-    <h2 style="text-align:center;">Escrow Bridge Addresses</h2>
-    <div id="network-addresses" style="display:flex; justify-content:center; flex-wrap:wrap; gap:1rem;"></div>
+  <div class="container">
+  <!-- Info Cards Row -->
+  <section id="info-section">
+    <div class="info-row">
+      <div class="rate-card">
+        <h3>Bridge Address</h3>
+        <div id="network-addresses"></div>
+      </div>
+      <div class="rate-card">
+        <h3>Exchange Rate</h3>
+        <div id="rates-display"></div>
+      </div>
+      <div class="rate-card">
+        <h3>Max Escrow Duration</h3>
+        <div id="escrow-time-display"></div>
+      </div>
+    </div>
   </section>
-
-  <!-- Exchange Rates -->
-  <section id="rates-section">
-    <h2>Exchange Rates</h2>
-    <div id="rates-display"></div>
-  </section>
-
-  <!-- Escrow Time -->
-<section id="escrow-time-section">
-  <h2>Max Escrow Duration</h2>
-  <div id="escrow-time-container">
-    <div id="escrow-time-display" class="rate-card"></div>
-  </div>
-</section>
 
   <!-- Pending IDs -->
   <section id="pending-ids-section">
-    <h2>Pending Escrow IDs</h2>
+    <h2>Pending Escrows</h2>
     <div id="pending-ids-display"></div>
   </section>
 
   <!-- Charts -->
   <section id="charts-section">
+    <h2 class="section-title">Volume Analytics</h2>
     <div class="charts-grid">
       <div class="chart-container">
         <div id="chart1-inner" class="chart-inner"></div>
         <div id="chart1-label" class="chart-label"></div>
       </div>
-      <div class="chart-container">
-        <div id="chart2-inner" class="chart-inner"></div>
-        <div id="chart2-label" class="chart-label"></div>
-      </div>
     </div>
   </section>
 
+  </div><!-- end container -->
+
   <footer>
     <p>
-      Contact: 
+      <span class="status-dot"></span>
+      Listener Active ·
       <a href="mailto:info@escrowbridge.xyz" class="email-link">
         info@escrowbridge.xyz
       </a>

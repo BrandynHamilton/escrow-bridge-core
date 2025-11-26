@@ -24,3 +24,4 @@ backend/cache/
 contracts/IDEAS.md
 backend/solidity/
 backend/abi/
+docker-compose.yml

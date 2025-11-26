@@ -1,6 +1,7 @@
 import os
-from web3 import Web3   
+from web3 import Web3
 from dotenv import load_dotenv
+from escrow_bridge.config import BLOCKDAG_RPC_URL
 load_dotenv()
 
 erc20_abi = [
@@ -50,7 +51,7 @@ erc20_abi = [
     }
 ]
 
-def network_func(network='ethereum-sepolia'):
+def network_func(network='blockdag-testnet'):
 
     ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY')
     TENDERLY_API_KEY = os.getenv('TENDERLY_API_KEY')
@@ -71,7 +72,7 @@ def network_func(network='ethereum-sepolia'):
         GATEWAY = f'https://base-sepolia.gateway.tenderly.co/{TENDERLY_API_KEY}'
 
     elif network == 'blockdag-testnet':
-        GATEWAY = 'https://rpc.primordial.bdagscan.com/'
+        GATEWAY = BLOCKDAG_RPC_URL
 
     w3 = Web3(Web3.HTTPProvider(GATEWAY))
 

@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from diskcache import Cache
 import httpx
 from escrow_bridge import network_func, get_payment, get_exchange_rate, SUPPORTED_NETWORKS, ZERO_ADDRESS
+from escrow_bridge.db import SettledEvent, init_db, get_session
 from threading import Thread, Lock
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,14 +20,18 @@ from hexbytes import HexBytes
 from apscheduler.schedulers.background import BackgroundScheduler
 import json
 import base64
-import sqlite3
 import hashlib
 import pandas as pd
 from chartengineer import ChartMaker
 from plotly.utils import PlotlyJSONEncoder
 from pydantic import BaseModel
+import secrets
 
 load_dotenv()
+
+def generate_salt():
+    """Generate a random bytes32 salt as hex string."""
+    return secrets.token_hex(32)
 
 cache = Cache("cache")
 
@@ -54,33 +59,32 @@ class WebhookPayload(BaseModel):
     webhook_url: str
     escrowId: str
 
+class RequestPaymentPayload(BaseModel):
+    amount: float
+    receiver: str
+    email: str
+    network: str = "blockdag-testnet"  # default network
+    api_key: str | None = None
+
 active_threads = set()
 lock = Lock()
 
 # Load ABI and config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-native_bridge_artifact_path = os.path.join(BASE_DIR, "..", "contracts", "out", "EscrowBridgeETH.sol", "EscrowBridgeETH.json")
-token_bridge_artifact_path = os.path.join(BASE_DIR, "..", "contracts", "out", "EscrowBridge.sol", "EscrowBridge.json")
+# Using EscrowBridge (USDC version) for BlockDAG
+escrow_bridge_artifact_path = os.path.join(BASE_DIR, "..", "contracts", "out", "EscrowBridge.sol", "EscrowBridge.json")
 
 bdag_address_path = os.path.join(BASE_DIR, "..", "contracts", "deployments", "blockdag-escrow-bridge.json")
-base_address_path = os.path.join(BASE_DIR, "..", "contracts", "deployments", "base-escrow-bridge.json")
 
-print(f'Loading ABI from {native_bridge_artifact_path}')
+print(f'Loading ABI from {escrow_bridge_artifact_path}')
 
-# Relative path to save ABI
-with open(native_bridge_artifact_path, 'r') as f:
-    native_bridge_abi = json.load(f)['abi']
-
-print(f'Loading ABI from {token_bridge_artifact_path}')
-with open(token_bridge_artifact_path, 'r') as f:
-    token_bridge_abi = json.load(f)['abi']
+# Load EscrowBridge ABI (USDC version)
+with open(escrow_bridge_artifact_path, 'r') as f:
+    escrow_bridge_abi = json.load(f)['abi']
 
 with open(bdag_address_path, 'r') as f:
-    NATIVE_ESCROW_BRIDGE_ADDRESS_BDAG = json.load(f)['deployedTo']
-
-with open(base_address_path, 'r') as f:
-    TOKEN_ESCROW_BRIDGE_ADDRESS_BASE = json.load(f)['deployedTo']
+    ESCROW_BRIDGE_ADDRESS_BDAG = json.load(f)['deployedTo']
 
 erc20_abi_path = os.path.join(BASE_DIR, 'abi', 'erc20Abi.json')
 with open(erc20_abi_path, 'r') as f:
@@ -90,17 +94,11 @@ CONFIG_PATH = os.path.join(BASE_DIR, 'chainsettle_config.json')
 with open(CONFIG_PATH, 'r') as f:
     config = json.load(f)
 
-# NATIVE_ESCROW_BRIDGE_ADDRESS_BDAG = os.getenv('NATIVE_ESCROW_BRIDGE_ADDRESS_BDAG')
-# TOKEN_ESCROW_BRIDGE_ADDRESS_BASE = os.getenv('TOKEN_ESCROW_BRIDGE_ADDRESS_BASE')
-
+# EscrowBridge (USDC) on BlockDAG Testnet
 escrow_bridge_config = {
-    "base-sepolia": {
-        "address": TOKEN_ESCROW_BRIDGE_ADDRESS_BASE,
-        "abi": token_bridge_abi,
-    },
     "blockdag-testnet": {
-        "address": NATIVE_ESCROW_BRIDGE_ADDRESS_BDAG,
-        "abi": native_bridge_abi
+        "address": ESCROW_BRIDGE_ADDRESS_BDAG,
+        "abi": escrow_bridge_abi
     },
 }
 
@@ -109,29 +107,31 @@ event_queue = queue.Queue()
 PRIVATE_KEY = os.getenv('EVM_PRIVATE_KEY')
 ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY')
 
-assert PRIVATE_KEY, "No PRIVATE_KEY in env"
+assert PRIVATE_KEY, "No EVM_PRIVATE_KEY in env"
 
 bdag_w3, bdag_account = network_func(
     network='blockdag-testnet',
 )
 
-base_w3, base_account = network_func(
-    network='base-sepolia',
-)
+blockdag_contract = bdag_w3.eth.contract(address=ESCROW_BRIDGE_ADDRESS_BDAG, abi=escrow_bridge_abi)
 
-base_contract = base_w3.eth.contract(address=TOKEN_ESCROW_BRIDGE_ADDRESS_BASE, abi=token_bridge_abi)
-blockdag_contract = bdag_w3.eth.contract(address=NATIVE_ESCROW_BRIDGE_ADDRESS_BDAG, abi=native_bridge_abi)
+# Initialize contract parameters with defaults (will be updated on first successful call)
+max_escrow_time = 3600  # Default 1 hour
+fee = 100  # Default 1%
+FEE_DENOMINATOR = 10000
+fee_pct = "1.00%"
 
-usdc_address = base_contract.functions.usdcToken().call()
-erc20 = base_w3.eth.contract(address=usdc_address, abi=erc20_abi)
-max_escrow_time = blockdag_contract.functions.maxEscrowTime().call()
-
-fee = blockdag_contract.functions.fee().call()
-FEE_DENOMINATOR = blockdag_contract.functions.FEE_DENOMINATOR().call()
-fee_pct = f"{fee / FEE_DENOMINATOR * 100:.2f}%"
+# Try to fetch actual values from contract
+try:
+    max_escrow_time = blockdag_contract.functions.maxEscrowTime().call()
+    fee = blockdag_contract.functions.fee().call()
+    FEE_DENOMINATOR = blockdag_contract.functions.FEE_DENOMINATOR().call()
+    fee_pct = f"{fee / FEE_DENOMINATOR * 100:.2f}%"
+    print(f"Contract parameters loaded: maxEscrowTime={max_escrow_time}s, fee={fee_pct}")
+except Exception as e:
+    print(f"Warning: Could not fetch contract parameters, using defaults: {e}")
 
 webhook_db_path = "webhooks.db"
-data_analysis_path = "data_analysis.db"
 pending_ids = set()
 
 def escrow_worker():
@@ -149,10 +149,7 @@ threading.Thread(target=escrow_worker, daemon=True).start()
 async def poll_and_expire_escrows(interval=60):
     while True:
         for net in SUPPORTED_NETWORKS:
-            if net == "blockdag-testnet":
-                w3, account = bdag_w3, bdag_account
-            else:
-                w3, account = base_w3, base_account
+            w3, account = bdag_w3, bdag_account
 
             contract_address = escrow_bridge_config[net]['address']
             abi = escrow_bridge_config[net]['abi']
@@ -202,114 +199,114 @@ async def poll_and_expire_escrows(interval=60):
 def create_charts():
     df = events_to_df()
     if df.empty:
-        print("No events yet; returning empty charts")
-        return json.dumps({}), json.dumps({})
+        print("No settled events yet; returning empty charts")
+        return json.dumps({})
 
-    df.set_index("createdAt", inplace=True)
+    df.set_index("settled_at", inplace=True)
     df.index = pd.to_datetime(df.index)
 
-    base_df = df[df["network"] == "base-sepolia"]
     blockdag_df = df[df["network"] == "blockdag-testnet"]
 
-    if base_df.empty and blockdag_df.empty:
+    if blockdag_df.empty:
         print("No network-specific data yet; returning empty charts")
-        return json.dumps({}), json.dumps({})
+        return json.dumps({})
 
-    cm1, cm2 = ChartMaker(shuffle_colors=False), ChartMaker(shuffle_colors=False)
+    cm = ChartMaker(shuffle_colors=False)
 
-    if not base_df.empty:
-        cm1.build(
-            df=base_df[['amountRequestedUsd']].resample('D').sum(),
-            axes_data={'y1':['amountRequestedUsd']},
-            title="Base Sepolia Daily Volume",
-            chart_type="bar",
-            options={'margin':{'t':100}, 'tickprefix':{'y1': '$'}, 'annotations':True, 'texttemplate':'%{label}<br>%{percent}'}
-        )
-        cm1.add_title(x=0.5, y=0.9)
+    cm.build(
+        df=blockdag_df[['amount_settled_usd']].resample('D').sum(),
+        axes_data={'y1':['amount_settled_usd']},
+        title="BlockDAG Testnet Settled Volume",
+        chart_type="bar",
+        options={'tickprefix':{'y1': '$'}, 'annotations':True, 'texttemplate':'%{label}<br>%{percent}'}
+    )
+    # cm.add_title(x=0.5, y=0.9)
 
-    if not blockdag_df.empty:
-        cm2.build(
-            df=blockdag_df[['amountRequestedUsd']].resample('D').sum(),
-            axes_data={'y1':['amountRequestedUsd']},
-            title="BlockDAG Testnet Daily Volume",
-            chart_type="bar",
-            options={'margin':{'t':100}, 'tickprefix':{'y1': '$'}, 'annotations':True, 'texttemplate':'%{label}<br>%{percent}'}
-        )
-        cm2.add_title(x=0.5, y=0.9)
-
-    graph_json_1 = json.dumps(cm2.return_fig(), cls=PlotlyJSONEncoder) if not blockdag_df.empty else json.dumps({})
-    graph_json_2 = json.dumps(cm1.return_fig(), cls=PlotlyJSONEncoder) if not base_df.empty else json.dumps({})
-
-    return graph_json_1, graph_json_2
+    return json.dumps(cm.return_fig(), cls=PlotlyJSONEncoder)
 
 def init_events_table():
-    print('initializing events table')
-    conn = sqlite3.connect(data_analysis_path)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            escrowId TEXT NOT NULL,
-            network TEXT NOT NULL,
-            payer TEXT NOT NULL,
-            createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            amountRequestedTokens INTEGER,
-            amountRequestedUsd INTEGER
-        )
-    """)
-    conn.commit()
-    conn.close()
+    """Initialize the database and create tables."""
+    print('Initializing database...')
+    try:
+        init_db()
+        print('[OK] Database initialized')
+    except Exception as e:
+        print(f'[WARNING] Database initialization failed: {e}')
 
 def add_event(event):
+    """Track PaymentSettled events for volume analytics."""
+    session = None
     try:
         escrowIdBytes = event['args']['escrowId']
         network, _ = find_network_for_settlement(escrowIdBytes)
         args = event['args']
 
-        escrowId = args['escrowId'].hex()
+        escrow_id = args['escrowId'].hex()
         payer = args['payer']
-        amountRequestedTokens = (args['payoutTokensAfterDeskFee'] / 1e6) if 'payoutTokensAfterDeskFee' in args else (args['payoutWeiAfterFee'] / 1e18)
-        amountRequestedUsd = (args['postedUsdFromRegistry'] / 1e6) if 'postedUsdFromRegistry' in args else (args['postedUsd'] / 1e6)
+        # PaymentSettled event fields for EscrowBridge (USDC version)
+        amount_settled_tokens = args['payoutTokensAfterDeskFee'] / 1e6  # USDC has 6 decimals
+        amount_settled_usd = args['postedUsdFromRegistry'] / 1e6
 
-        conn = sqlite3.connect(data_analysis_path)
-        cursor = conn.cursor()
+        session = get_session()
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                escrowId TEXT NOT NULL,
-                network TEXT NOT NULL,
-                payer TEXT NOT NULL,
-                createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                amountRequestedTokens INTEGER,
-                amountRequestedUsd INTEGER
-            )
-        """)
+        # Check if event already exists
+        existing = session.query(SettledEvent).filter_by(escrow_id=escrow_id).first()
+        if existing:
+            print(f"[analytics] Event already recorded: {escrow_id[:16]}...")
+            return
 
-        cursor.execute(
-            "INSERT INTO events (escrowId, network, payer, amountRequestedTokens, amountRequestedUsd) VALUES (?, ?, ?, ?, ?)",
-            (escrowId, network, payer, amountRequestedTokens, amountRequestedUsd)
+        # Create new event
+        settled_event = SettledEvent(
+            escrow_id=escrow_id,
+            network=network,
+            payer=payer,
+            amount_settled_tokens=amount_settled_tokens,
+            amount_settled_usd=amount_settled_usd
         )
-        conn.commit()
+        session.add(settled_event)
+        session.commit()
+        print(f"[analytics] Recorded settled payment: {escrow_id[:16]}... ${amount_settled_usd:.2f}")
     except Exception as e:
-        print(f"[ERROR] Failed to add event: {e}")
+        print(f"[ERROR] Failed to add settled event: {e}")
+        if session:
+            session.rollback()
     finally:
-        if 'conn' in locals():
-            conn.close()
+        if session:
+            session.close()
 
 def events_to_df():
-    conn = sqlite3.connect(data_analysis_path)
+    """Load settled events as a pandas DataFrame."""
+    session = None
     try:
-        df = pd.read_sql_query("SELECT * FROM events", conn)
-    except (sqlite3.OperationalError, pd.errors.DatabaseError):
-        print("No events table found; returning empty DataFrame")
-        df = pd.DataFrame(columns=[
-            "id", "escrowId", "network", "payer",
-            "createdAt", "amountRequestedTokens", "amountRequestedUsd"
+        session = get_session()
+        events = session.query(SettledEvent).all()
+
+        if not events:
+            return pd.DataFrame(columns=[
+                "id", "escrow_id", "network", "payer",
+                "settled_at", "amount_settled_tokens", "amount_settled_usd"
+            ])
+
+        data = [{
+            "id": e.id,
+            "escrow_id": e.escrow_id,
+            "network": e.network,
+            "payer": e.payer,
+            "settled_at": e.settled_at,
+            "amount_settled_tokens": e.amount_settled_tokens,
+            "amount_settled_usd": e.amount_settled_usd
+        } for e in events]
+
+        return pd.DataFrame(data)
+    except Exception as e:
+        print(f"[ERROR] Failed to load events: {e}")
+        return pd.DataFrame(columns=[
+            "id", "escrow_id", "network", "payer",
+            "settled_at", "amount_settled_tokens", "amount_settled_usd"
         ])
     finally:
-        conn.close()
-    return df
+        if session:
+            session.close()
 
 def make_serializable(obj, preserve_base64_keys=None):
     """
@@ -354,10 +351,7 @@ def find_network_for_settlement(settlement_id):
                     # print(f"[find_network] Found {settlement_id} in cache → {net}")
 
                     # Rebuild contract from cached info
-                    if net == "blockdag-testnet":
-                        w3, account = bdag_w3, bdag_account
-                    else:
-                        w3, account = base_w3, base_account
+                    w3, account = bdag_w3, bdag_account
 
                     abi = escrow_bridge_config[net]["abi"]
                     contract = w3.eth.contract(address=address, abi=abi)
@@ -369,14 +363,7 @@ def find_network_for_settlement(settlement_id):
 
     # --- Fallback: search on-chain ---
     for net in SUPPORTED_NETWORKS:
-        try:
-            if net == "blockdag-testnet":
-                w3, account = bdag_w3, bdag_account
-            else:
-                w3, account = base_w3, base_account
-        except Exception as e:
-            print(f"[find_network] Error connecting to {net}: {e}")
-            continue
+        w3, account = bdag_w3, bdag_account
 
         address = escrow_bridge_config[net]["address"]
         abi = escrow_bridge_config[net]["abi"]
@@ -414,13 +401,7 @@ def find_network_for_settlement(settlement_id):
 def get_all_exchange_rates():
     struct = {}
     for network in SUPPORTED_NETWORKS:
-        try:
-            if network == "blockdag-testnet":
-                w3, account = bdag_w3, bdag_account
-            else:
-                w3, account = base_w3, base_account
-        except Exception as e:
-            print(f"[find_network] Error connecting to {network}: {e}")
+        w3, account = bdag_w3, bdag_account
 
         address = escrow_bridge_config[network]['address']
         abi = escrow_bridge_config[network]['abi']
@@ -474,14 +455,7 @@ def update_exchange_rates():
 def get_pending_contract_ids():
     d = {}
     for net in SUPPORTED_NETWORKS:
-        try:
-            if net == "blockdag-testnet":
-                w3, account = bdag_w3, bdag_account
-            else:
-                w3, account = base_w3, base_account
-        except Exception as e:
-            print(f"[find_network] Error connecting to {net}: {e}")
-            continue
+        w3, account = bdag_w3, bdag_account
 
         contract_address = escrow_bridge_config[net]['address']
         abi = escrow_bridge_config[net]['abi']
@@ -541,10 +515,7 @@ async def _poll_and_finalize_async(id_hash, max_attempts, delay):
         id_hash_bytes = Web3.to_bytes(hexstr=id_hash)
         network, bridge = find_network_for_settlement(id_hash_bytes)
 
-        if network == "blockdag-testnet":
-            w3, account = bdag_w3, bdag_account
-        else:
-            w3, account = base_w3, base_account
+        w3, account = bdag_w3, bdag_account
 
         for attempt in range(max_attempts):
             is_finalized = bridge.functions.isFinalized(id_hash_bytes).call()
@@ -608,14 +579,7 @@ async def poll_pending_settlements_async(max_attempts=60, delay=5):
         await asyncio.sleep(2)
  
 async def log_loop_for_network(network, lookback=5):
-    try:
-        if network == "blockdag-testnet":
-            w3, account = bdag_w3, bdag_account
-        else:
-            w3, account = base_w3, base_account
-    except Exception as e:
-        print(f"[{network}] Error initializing web3/account: {e}")
-        return
+    w3, account = bdag_w3, bdag_account
 
     try:
         bridge = w3.eth.contract(
@@ -626,13 +590,14 @@ async def log_loop_for_network(network, lookback=5):
         print(f"[{network}] Error initializing contract: {e}")
         return
 
-    last_block = w3.eth.block_number
+    processed_tx_hashes = set()
+    last_block = w3.eth.block_number - lookback  # Start with lookback on first iteration only
     print(f"[{network}] Starting event loop from block {last_block}")
 
     while True:
         try:
             current_block = w3.eth.block_number
-            from_block = max(last_block - lookback + 1, 0)  # small lookback to handle reorgs
+            from_block = last_block + 1  # Only process new blocks
 
             if current_block >= from_block:
                 logs = bridge.events.PaymentInitialized.get_logs(
@@ -640,14 +605,20 @@ async def log_loop_for_network(network, lookback=5):
                     to_block=current_block
                 )
                 for ev in logs:
-                    handle_init_event(ev)
+                    tx_hash = ev['transactionHash'].hex()
+                    if tx_hash not in processed_tx_hashes:
+                        processed_tx_hashes.add(tx_hash)
+                        handle_init_event(ev)
 
                 logs = bridge.events.PaymentSettled.get_logs(
                     from_block=from_block,
                     to_block=current_block
                 )
                 for ev in logs:
-                    handle_settle_event(ev)
+                    tx_hash = ev['transactionHash'].hex()
+                    if tx_hash not in processed_tx_hashes:
+                        processed_tx_hashes.add(tx_hash)
+                        handle_settle_event(ev)
 
                 last_block = current_block
 
@@ -693,6 +664,10 @@ def get_status(escrowId: str):
 async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 @app.get("/config")
 async def config():
     clean_config = {}
@@ -713,9 +688,6 @@ async def startup_event():
 @app.get("/supported_networks")
 async def supported_networks():
     struct = {
-        "base-sepolia": {
-            "chain_id": base_w3.eth.chain_id
-        },
         "blockdag-testnet": {
             "chain_id": bdag_w3.eth.chain_id
         }
@@ -725,15 +697,12 @@ async def supported_networks():
 
 @app.get("/charts")
 async def charts():
-    graph_json_1, graph_json_2 = create_charts()
+    graph_json = create_charts()
 
     blockdag_free_balance_raw = blockdag_contract.functions.getFreeBalance().call()
-    blockdag_free_balance = blockdag_free_balance_raw / 1e18
+    blockdag_free_balance = blockdag_free_balance_raw / 1e6  # USDC has 6 decimals
 
-    base_free_balance_raw = base_contract.functions.getFreeBalance().call()
-    base_free_balance = base_free_balance_raw / 1e6
-
-    return {"graph_1": graph_json_1, "graph_2": graph_json_2, "bdag_balance": blockdag_free_balance, "base_usdc_balance": base_free_balance}
+    return {"graph_1": graph_json, "graph_2": json.dumps({}), "bdag_balance": blockdag_free_balance}
 
 @app.get("/")
 
@@ -780,10 +749,10 @@ async def escrow_info(escrowId):
 
     data = get_payment(escrow_id_bytes, contract)
 
-    data['requestedAmount'] = data.get("requestedAmount") / 1e6 if network == "base-sepolia" else data.get("requestedAmount") / 1e18
+    data['requestedAmount'] = data.get("requestedAmount") / 1e18
     data['requestedAmountUsd'] = data.get("requestedAmountUsd") / 1e6
 
-    data['postedAmount'] = data.get("postedAmount") / 1e6 if network == "base-sepolia" else data.get("postedAmount") / 1e18
+    data['postedAmount'] = data.get("postedAmount") / 1e18
     data['postedAmountUsd'] = data.get("postedAmountUsd") / 1e6
 
     resp = {"escrowId": escrowId, "payment": data}
@@ -805,4 +774,94 @@ def get_max_escrow_time():
 def get_fee():
     return {"fee_pct": fee_pct}
 
-# 4028
+@app.post("/request_payment")
+async def request_payment(payload: RequestPaymentPayload):
+    amount = payload.amount
+    receiver = payload.receiver
+    email = payload.email
+    network = payload.network
+
+    if network not in SUPPORTED_NETWORKS:
+        raise HTTPException(status_code=400, detail=f"Unsupported network: {network}")
+
+    w3, account = bdag_w3, bdag_account
+
+    contract_address = escrow_bridge_config[network]["address"]
+    abi = escrow_bridge_config[network]["abi"]
+    contract = w3.eth.contract(address=contract_address, abi=abi)
+
+    decimals = 18  # Native token (BDAG)
+
+    raw_amount_needed = int(amount * 10**decimals)
+    print(f"Raw amount needed: {raw_amount_needed}")
+
+    settlement_id = secrets.token_hex(4)
+    print(f"Generated settlement ID: {settlement_id}")
+
+    salt = generate_salt()
+    if not salt.startswith("0x"):
+        salt = "0x" + salt
+
+    print(f"Generated salt: {salt}")
+
+    id_hash_bytes = w3.solidity_keccak(
+        ["bytes32", "string"],
+        [salt, settlement_id]
+    )
+
+    user_email_hash_bytes = w3.solidity_keccak(
+        ["bytes32", "string"],
+        [salt, email]
+    )
+
+    id_hash = id_hash_bytes.hex()
+    print(f"> Computed id_hash = {id_hash}")
+
+    if not Web3.is_checksum_address(receiver):
+        raise HTTPException(status_code=400, detail="Invalid receiver address")
+
+    try:
+        tx = contract.functions.initPayment(
+            id_hash_bytes,
+            user_email_hash_bytes,
+            raw_amount_needed,
+            receiver
+        ).build_transaction({
+            "from": account.address,
+            "nonce": w3.eth.get_transaction_count(account.address, "pending"),
+        })
+
+        try:
+            gas_est = w3.eth.estimate_gas(tx)
+        except Exception as e:
+            gas_est = 200000
+            print(f"Error estimating gas: {e}")
+
+        latest_block = w3.eth.get_block("latest")
+        base_fee = latest_block.get("baseFeePerGas", w3.to_wei(15, "gwei"))
+        priority_fee = w3.to_wei(2, "gwei")
+        max_fee = base_fee + priority_fee
+
+        tx.update({
+            "gas": int(gas_est * 1.5),
+            "maxPriorityFeePerGas": priority_fee,
+            "maxFeePerGas": max_fee,
+            "type": 2
+        })
+
+        signed_init = account.sign_transaction(tx)
+        h_init = w3.eth.send_raw_transaction(signed_init.raw_transaction)
+        receipt_init = w3.eth.wait_for_transaction_receipt(h_init)
+
+        if receipt_init.status != 1:
+            raise HTTPException(status_code=500, detail="initPayment transaction reverted")
+
+        print(f"initPayment({settlement_id}, {amount}) submitted -> Tx: {h_init.hex()}")
+
+        return {"tx_hash": h_init.hex(), "id_hash": id_hash, "network": network}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error processing payment request: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -25,7 +25,13 @@ dependencies = [
     "chartengineer==0.1.5",
     "apscheduler>=3.10.4",
     "rich>=13.8.1",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.9",
 ]
 
 [tool.setuptools.packages.find]
 include = ["escrow_bridge", "escrow_bridge.*"]
+
+[project.scripts]
+escrow-bridge = "escrow_bridge.cli.main:cli"
+escrow-bridge-admin = "escrow_bridge.cli.admin:cli"
