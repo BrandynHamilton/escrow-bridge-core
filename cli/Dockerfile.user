@@ -9,4 +9,6 @@ RUN apt-get update && apt-get install -y bash
 
 RUN pip install --upgrade pip && pip install -e ./backend
 
-ENTRYPOINT ["python", "-m", "backend.cli"]
+# Entrypoint for escrow-bridge user CLI
+ENTRYPOINT ["escrow-bridge"]
+CMD ["--help"]

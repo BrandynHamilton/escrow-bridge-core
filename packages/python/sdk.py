@@ -12,7 +12,8 @@ class RequestPaymentParams:
     """Parameters for requesting a payment."""
     amount: float
     receiver: str
-    network: str = "base-sepolia"
+    email: str
+    network: str = "blockdag-testnet"
     api_key: Optional[str] = None
 
 
@@ -44,7 +45,7 @@ class EscrowBridgeSDK:
         )
     """
 
-    def __init__(self, base_url: str, api_key: Optional[str] = None, timeout: float = 30.0):
+    def __init__(self, base_url: str, timeout: float = 30.0):
         """
         Initialize the SDK client.
 
@@ -53,13 +54,8 @@ class EscrowBridgeSDK:
             timeout: Request timeout in seconds
         """
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
         self.timeout = timeout
         self._client = httpx.Client(timeout=timeout)
-
-        self.headers = {}
-        if self.api_key:
-            self.headers["X-API-KEY"] = self.api_key
 
     def __enter__(self):
         return self
@@ -81,7 +77,7 @@ class EscrowBridgeSDK:
     def _post(self, endpoint: str, data: dict) -> dict:
         """Make a POST request to the API."""
         url = f"{self.base_url}{endpoint}"
-        response = self._client.post(url, json=data, headers=self.headers)
+        response = self._client.post(url, json=data)
         response.raise_for_status()
         return response.json()
 
@@ -158,7 +154,8 @@ class EscrowBridgeSDK:
         self,
         amount: float,
         receiver: str,
-        network: str = "base-sepolia",
+        email: str,
+        network: str = "blockdag-testnet",
         api_key: Optional[str] = None
     ) -> dict:
         """
@@ -177,10 +174,11 @@ class EscrowBridgeSDK:
         payload = {
             "amount": amount,
             "receiver": receiver,
+            "email": email,
             "network": network,
         }
         if api_key:
-            self.headers["X-API-KEY"] = api_key
+            payload["api_key"] = api_key
 
         return self._post("/request_payment", payload)
 
@@ -212,23 +210,17 @@ class AsyncEscrowBridgeSDK:
             rates = await sdk.exchange_rates()
     """
 
-    def __init__(self, base_url: str, api_key: Optional[str] = None, timeout: float = 30.0):
+    def __init__(self, base_url: str, timeout: float = 30.0):
         """
         Initialize the async SDK client.
 
         Args:
             base_url: The base URL of the Escrow Bridge API
-            api_key: Optional API key for authentication
             timeout: Request timeout in seconds
         """
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
         self.timeout = timeout
         self._client = httpx.AsyncClient(timeout=timeout)
-
-        self.headers = {}
-        if self.api_key:
-            self.headers["X-API-KEY"] = self.api_key
 
     async def __aenter__(self):
         return self
@@ -250,7 +242,7 @@ class AsyncEscrowBridgeSDK:
     async def _post(self, endpoint: str, data: dict) -> dict:
         """Make a POST request to the API."""
         url = f"{self.base_url}{endpoint}"
-        response = await self._client.post(url, json=data, headers=self.headers)
+        response = await self._client.post(url, json=data)
         response.raise_for_status()
         return response.json()
 
@@ -286,13 +278,15 @@ class AsyncEscrowBridgeSDK:
         self,
         amount: float,
         receiver: str,
-        network: str = "base-sepolia",
+        email: str,
+        network: str = "blockdag-testnet",
         api_key: Optional[str] = None
     ) -> dict:
         """Request a new payment/escrow."""
         payload = {
             "amount": amount,
             "receiver": receiver,
+            "email": email,
             "network": network,
         }
         if api_key:

@@ -1,13 +1,13 @@
 import os
 import json
 
-SUPPORTED_NETWORKS = ['blockdag-testnet']
+SUPPORTED_NETWORKS = ['base-sepolia']
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 
 # BlockDAG Testnet Configuration
-BLOCKDAG_RPC_URL = os.getenv("BLOCKDAG_RPC_URL", "https://rpc.primordial.bdagscan.com/")
-BLOCKDAG_EXPLORER_URL = os.getenv("BLOCKDAG_EXPLORER_URL", "https://primordial.bdagscan.com/tx/")
+BLOCKDAG_RPC_URL = os.getenv("BLOCKDAG_RPC_URL", "https://relay.awakening.bdagscan.com/")
+BLOCKDAG_EXPLORER_URL = os.getenv("BLOCKDAG_EXPLORER_URL", "https://awakening.bdagscan.com/tx/")
 
 # Load contract addresses from deployment files
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

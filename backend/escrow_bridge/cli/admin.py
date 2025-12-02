@@ -19,9 +19,13 @@ CONFIG_PATH = os.path.join(BACKEND_DIR, 'chainsettle_config.json')
 with open(CONFIG_PATH, "r") as f:
     config = json.load(f)
 
-# Using EscrowBridge (USDC version) for BlockDAG
+# Using EscrowBridge (USDC version) for Base Sepolia
 escrow_bridge_artifact_path = os.path.join(CONTRACTS_DIR, "out", "EscrowBridge.sol", "EscrowBridge.json")
+base_address_path = os.path.join(CONTRACTS_DIR, "deployments", "base-escrow-bridge.json")
 bdag_address_path = os.path.join(CONTRACTS_DIR, "deployments", "blockdag-escrow-bridge.json")
+
+with open(base_address_path, 'r') as f:
+    ESCROW_BRIDGE_ADDRESS_BASE = json.load(f)['deployedTo']
 
 with open(bdag_address_path, 'r') as f:
     ESCROW_BRIDGE_ADDRESS_BDAG = json.load(f)['deployedTo']
@@ -29,8 +33,12 @@ with open(bdag_address_path, 'r') as f:
 with open(escrow_bridge_artifact_path, 'r') as f:
     escrow_bridge_abi = json.load(f)['abi']
 
-# EscrowBridge (USDC) on BlockDAG Testnet only
+# EscrowBridge (USDC) configuration
 escrow_bridge_config = {
+    "base-sepolia": {
+        "address": ESCROW_BRIDGE_ADDRESS_BASE,
+        "abi": escrow_bridge_abi
+    },
     "blockdag-testnet": {
         "address": ESCROW_BRIDGE_ADDRESS_BDAG,
         "abi": escrow_bridge_abi
@@ -44,12 +52,14 @@ def cli():
 
 @click.command()
 @click.option("--amount", default=1, type=int, help="Amount of USDC to top up the EscrowBridge contract with (normalized).")
-@click.option("--network", default="blockdag-testnet", type=click.Choice(SUPPORTED_NETWORKS), help="Blockchain network to use.")
+@click.option("--network", default="base-sepolia", type=click.Choice(SUPPORTED_NETWORKS), help="Blockchain network to use.")
 def fund_escrow(amount, network):
     """Fund the EscrowBridge contract with USDC tokens."""
     print_panel("Fund Escrow Bridge", tone="info")
 
-    REGISTRY_ADDRESS = config["blockdag"]['registry_addresses']["paypal"]
+    norm_network = network.split("-")[0]
+
+    REGISTRY_ADDRESS = config[norm_network]['registry_addresses']["paypal"]
 
     with progress_bar("Connecting to network...") as progress:
         task = progress.add_task("Setting up...", total=None)
@@ -106,7 +116,7 @@ def fund_escrow(amount, network):
     rows = [
         ("Token", f"{token_address[:20]}... ({symbol})"),
         ("Decimals", str(token_decimals)),
-        ("Fee", f"{fee / 10000:.2f}%"),
+        ("Fee", f"{fee / 100:.2f}%"),
         ("Min", f"{min_human:.6f} {symbol}"),
         ("Max", f"{max_human:.6f} {symbol}"),
     ]
@@ -249,7 +259,7 @@ def fund_escrow(amount, network):
     print_status(f"Bridge balance: {bridge_human_balance:.6f} {symbol}", level="success")
 
 @click.command()
-@click.option("--network", default="blockdag-testnet", type=click.Choice(SUPPORTED_NETWORKS), help="Blockchain network to use.")
+@click.option("--network", default="base-sepolia", type=click.Choice(SUPPORTED_NETWORKS), help="Blockchain network to use.")
 def check_exchange_rate(network):
     """Check the current exchange rate on the bridge."""
     print_panel("Check Exchange Rate", tone="info")
@@ -267,7 +277,7 @@ def check_exchange_rate(network):
     print_status(f"Current exchange rate: {current_rate:.6f} USD", level="success")
 
 @click.command()
-@click.option("--network", default="blockdag-testnet", type=click.Choice(SUPPORTED_NETWORKS), help="Blockchain network to use.")
+@click.option("--network", default="base-sepolia", type=click.Choice(SUPPORTED_NETWORKS), help="Blockchain network to use.")
 @click.option("--exchange-rate", type=float, help="New exchange rate in USD.", required=True)
 def update_exchange_rate(network, exchange_rate):
     """Update the exchange rate on the bridge contract."""

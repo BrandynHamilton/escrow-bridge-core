@@ -25,3 +25,8 @@ contracts/IDEAS.md
 backend/solidity/
 backend/abi/
 docker-compose.yml
+network_lookup_cache/
+
+*.env
+.env.production
+!.env.sample

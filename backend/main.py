@@ -8,13 +8,14 @@ from dotenv import load_dotenv
 from diskcache import Cache
 import httpx
 from escrow_bridge import network_func, get_payment, get_exchange_rate, SUPPORTED_NETWORKS, ZERO_ADDRESS
-from escrow_bridge.db import SettledEvent, init_db, get_session
+from escrow_bridge.db import SettledEvent, APIKey, init_db, get_session
 from threading import Thread, Lock
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse
 import asyncio
+from contextlib import asynccontextmanager
 from Crypto.Hash import keccak
 from hexbytes import HexBytes
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -26,6 +27,8 @@ from chartengineer import ChartMaker
 from plotly.utils import PlotlyJSONEncoder
 from pydantic import BaseModel
 import secrets
+from typing import Optional
+import requests
 
 load_dotenv()
 
@@ -35,10 +38,23 @@ def generate_salt():
 
 cache = Cache("cache")
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup event
+    asyncio.create_task(main_log_loop())
+    asyncio.create_task(poll_pending_settlements_async())
+    asyncio.create_task(poll_and_expire_escrows(interval=60*5))  # every 5 minutes
+    update_exchange_rates()
+    init_events_table()
+    update_pending_contract_ids()
+    yield
+    # Shutdown event (if needed)
+
 app = FastAPI(
     title="Escrow Bridge Listener API",
     description="Automatically generated OpenAPI docs",
-    version="1.0"
+    version="1.0",
+    lifespan=lifespan
 )
 
 templates = Jinja2Templates(directory="templates")
@@ -54,7 +70,6 @@ app.add_middleware(
     allow_headers=["*"],    # Allows all headers
 )
 
-
 class WebhookPayload(BaseModel):
     webhook_url: str
     escrowId: str
@@ -62,9 +77,21 @@ class WebhookPayload(BaseModel):
 class RequestPaymentPayload(BaseModel):
     amount: float
     receiver: str
-    email: str
-    network: str = "blockdag-testnet"  # default network
-    api_key: str | None = None
+    network: str = "base-sepolia"  # default network
+
+class APIKeyCreateRequest(BaseModel):
+    name: str  # User-friendly name for the key
+
+class APIKeyResponse(BaseModel):
+    id: int
+    name: str
+    created_at: str
+    last_used_at: Optional[str] = None
+    is_active: bool
+
+class APIKeyGenerateResponse(BaseModel):
+    key: str  # The actual API key (only shown once)
+    api_key: APIKeyResponse
 
 active_threads = set()
 lock = Lock()
@@ -72,16 +99,24 @@ lock = Lock()
 # Load ABI and config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Using EscrowBridge (USDC version) for BlockDAG
+# Using EscrowBridge (USDC version) for Base
 escrow_bridge_artifact_path = os.path.join(BASE_DIR, "..", "contracts", "out", "EscrowBridge.sol", "EscrowBridge.json")
+native_bridge_artifact_path = os.path.join(BASE_DIR, "..", "contracts", "out", "EscrowBridgeETH.sol", "EscrowBridgeETH.json")
 
 bdag_address_path = os.path.join(BASE_DIR, "..", "contracts", "deployments", "blockdag-escrow-bridge.json")
+base_address_path = os.path.join(BASE_DIR, "..", "contracts", "deployments", "base-escrow-bridge.json")
 
 print(f'Loading ABI from {escrow_bridge_artifact_path}')
 
 # Load EscrowBridge ABI (USDC version)
 with open(escrow_bridge_artifact_path, 'r') as f:
     escrow_bridge_abi = json.load(f)['abi']
+
+with open(native_bridge_artifact_path, 'r') as f:
+    native_bridge_abi = json.load(f)['abi']
+
+with open(base_address_path, 'r') as f:
+    ESCROW_BRIDGE_ADDRESS_BASE = json.load(f)['deployedTo']
 
 with open(bdag_address_path, 'r') as f:
     ESCROW_BRIDGE_ADDRESS_BDAG = json.load(f)['deployedTo']
@@ -96,36 +131,48 @@ with open(CONFIG_PATH, 'r') as f:
 
 # EscrowBridge (USDC) on BlockDAG Testnet
 escrow_bridge_config = {
-    "blockdag-testnet": {
-        "address": ESCROW_BRIDGE_ADDRESS_BDAG,
+    # "blockdag-testnet": {
+    #     "address": ESCROW_BRIDGE_ADDRESS_BDAG,
+    #     "abi": native_bridge_abi
+    # },
+    "base-sepolia": {
+        "address": ESCROW_BRIDGE_ADDRESS_BASE,
         "abi": escrow_bridge_abi
-    },
+    }
 }
 
 event_queue = queue.Queue()
 
 PRIVATE_KEY = os.getenv('EVM_PRIVATE_KEY')
 ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY')
+ADMIN_KEY = os.getenv('ADMIN_KEY')
+CHAINSETTLE_API_URL = os.getenv("CHAINSETTLE_API_URL", "https://api.chainsettle.tech")
 
 assert PRIVATE_KEY, "No EVM_PRIVATE_KEY in env"
 
-bdag_w3, bdag_account = network_func(
-    network='blockdag-testnet',
+assert ADMIN_KEY, "No ADMIN_KEY in env"
+
+base_w3, base_account = network_func(
+    network='base-sepolia',
 )
 
-blockdag_contract = bdag_w3.eth.contract(address=ESCROW_BRIDGE_ADDRESS_BDAG, abi=escrow_bridge_abi)
-
+base_contract = base_w3.eth.contract(address=ESCROW_BRIDGE_ADDRESS_BASE, abi=escrow_bridge_abi)
 # Initialize contract parameters with defaults (will be updated on first successful call)
 max_escrow_time = 3600  # Default 1 hour
 fee = 100  # Default 1%
 FEE_DENOMINATOR = 10000
 fee_pct = "1.00%"
+recipient_email = base_contract.functions.recipientEmail().call()
+usdc_address = base_contract.functions.usdcToken().call()
+
+erc20 = base_w3.eth.contract(address=usdc_address, abi=erc20_abi)
+token_decimals = erc20.functions.decimals().call()
 
 # Try to fetch actual values from contract
 try:
-    max_escrow_time = blockdag_contract.functions.maxEscrowTime().call()
-    fee = blockdag_contract.functions.fee().call()
-    FEE_DENOMINATOR = blockdag_contract.functions.FEE_DENOMINATOR().call()
+    max_escrow_time = base_contract.functions.maxEscrowTime().call()
+    fee = base_contract.functions.fee().call()
+    FEE_DENOMINATOR = base_contract.functions.FEE_DENOMINATOR().call()
     fee_pct = f"{fee / FEE_DENOMINATOR * 100:.2f}%"
     print(f"Contract parameters loaded: maxEscrowTime={max_escrow_time}s, fee={fee_pct}")
 except Exception as e:
@@ -133,6 +180,65 @@ except Exception as e:
 
 webhook_db_path = "webhooks.db"
 pending_ids = set()
+
+def require_admin_auth(x_admin_key: str = Header(...)):
+    if x_admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing admin key")
+    return x_admin_key
+
+async def require_auth(
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    """
+    Accept either:
+    - Authorization: Bearer <API_KEY>
+    - X-API-KEY: <API_KEY>
+    Uses PostgreSQL-based API key validation
+    """
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1]
+    elif x_api_key:
+        token = x_api_key
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authorization")
+
+    # Check API key against PostgreSQL database
+    session = get_session()
+    try:
+        api_key = APIKey.verify_key(token, session)
+        if api_key:
+            return {"type": "api_key", "value": token}
+        raise HTTPException(status_code=401, detail="Invalid or inactive API key")
+    finally:
+        session.close()
+
+async def require_api_key(
+    authorization: str | None = Header(None),
+    x_api_key: str | None = Header(None)
+):
+    """Get API key from Authorization: Bearer <key> or X-API-KEY header."""
+    provided_key = None
+    print(f'Authorization header: {authorization}, X-API-KEY header: {x_api_key}')
+    if authorization and authorization.startswith("Bearer "):
+        provided_key = authorization.split(" ", 1)[1]
+    elif x_api_key:
+        provided_key = x_api_key
+
+    if not provided_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+    # Verify against PostgreSQL
+    session = get_session()
+    try:
+        api_key = APIKey.verify_key(provided_key, session)
+        if not api_key:
+            raise HTTPException(status_code=401, detail="Invalid or inactive API key")
+        return provided_key
+    finally:
+        session.close()  
 
 def escrow_worker():
     while True:
@@ -149,7 +255,7 @@ threading.Thread(target=escrow_worker, daemon=True).start()
 async def poll_and_expire_escrows(interval=60):
     while True:
         for net in SUPPORTED_NETWORKS:
-            w3, account = bdag_w3, bdag_account
+            w3, account = base_w3, base_account
 
             contract_address = escrow_bridge_config[net]['address']
             abi = escrow_bridge_config[net]['abi']
@@ -205,7 +311,7 @@ def create_charts():
     df.set_index("settled_at", inplace=True)
     df.index = pd.to_datetime(df.index)
 
-    blockdag_df = df[df["network"] == "blockdag-testnet"]
+    blockdag_df = df[df["network"] == "base-sepolia"]
 
     if blockdag_df.empty:
         print("No network-specific data yet; returning empty charts")
@@ -216,7 +322,7 @@ def create_charts():
     cm.build(
         df=blockdag_df[['amount_settled_usd']].resample('D').sum(),
         axes_data={'y1':['amount_settled_usd']},
-        title="BlockDAG Testnet Settled Volume",
+        title="Base Sepolia Settled Volume",
         chart_type="bar",
         options={'tickprefix':{'y1': '$'}, 'annotations':True, 'texttemplate':'%{label}<br>%{percent}'}
     )
@@ -351,7 +457,7 @@ def find_network_for_settlement(settlement_id):
                     # print(f"[find_network] Found {settlement_id} in cache → {net}")
 
                     # Rebuild contract from cached info
-                    w3, account = bdag_w3, bdag_account
+                    w3, account = base_w3, base_account
 
                     abi = escrow_bridge_config[net]["abi"]
                     contract = w3.eth.contract(address=address, abi=abi)
@@ -363,7 +469,7 @@ def find_network_for_settlement(settlement_id):
 
     # --- Fallback: search on-chain ---
     for net in SUPPORTED_NETWORKS:
-        w3, account = bdag_w3, bdag_account
+        w3, account = base_w3, base_account
 
         address = escrow_bridge_config[net]["address"]
         abi = escrow_bridge_config[net]["abi"]
@@ -401,7 +507,7 @@ def find_network_for_settlement(settlement_id):
 def get_all_exchange_rates():
     struct = {}
     for network in SUPPORTED_NETWORKS:
-        w3, account = bdag_w3, bdag_account
+        w3, account = base_w3, base_account
 
         address = escrow_bridge_config[network]['address']
         abi = escrow_bridge_config[network]['abi']
@@ -455,7 +561,7 @@ def update_exchange_rates():
 def get_pending_contract_ids():
     d = {}
     for net in SUPPORTED_NETWORKS:
-        w3, account = bdag_w3, bdag_account
+        w3, account = base_w3, base_account
 
         contract_address = escrow_bridge_config[net]['address']
         abi = escrow_bridge_config[net]['abi']
@@ -498,13 +604,20 @@ async def watch_escrow_status(id_hash: str, webhook_url: str, interval: float = 
     for attempt in range(1, max_attempts + 1):
         status = get_status(id_hash)
         if status.get("status") == "completed":
-            async with httpx.AsyncClient() as client:
-                await client.post(webhook_url, json={
-                    "id_hash": id_hash,
-                    "status": status.get("status")
-                })
-            print(f"✅ Webhook fired for {id_hash}")
-            return
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(webhook_url, json={
+                        "id_hash": id_hash,
+                        "status": status.get("status")
+                    }, timeout=10.0)
+                    print(f"✅ Webhook fired for {id_hash}, URL: {webhook_url} (status: {response.status_code})")
+                    print(f"   Response: {response.text}")
+                    return
+            except Exception as e:
+                print(f"❌ Webhook failed for {id_hash}: {e}")
+                import traceback
+                traceback.print_exc()
+                return
         await asyncio.sleep(interval)
 
     print(f"⚠️ Webhook {id_hash} expired after {max_attempts} attempts")
@@ -515,7 +628,7 @@ async def _poll_and_finalize_async(id_hash, max_attempts, delay):
         id_hash_bytes = Web3.to_bytes(hexstr=id_hash)
         network, bridge = find_network_for_settlement(id_hash_bytes)
 
-        w3, account = bdag_w3, bdag_account
+        w3, account = base_w3, base_account
 
         for attempt in range(max_attempts):
             is_finalized = bridge.functions.isFinalized(id_hash_bytes).call()
@@ -579,7 +692,7 @@ async def poll_pending_settlements_async(max_attempts=60, delay=5):
         await asyncio.sleep(2)
  
 async def log_loop_for_network(network, lookback=5):
-    w3, account = bdag_w3, bdag_account
+    w3, account = base_w3, base_account
 
     try:
         bridge = w3.eth.contract(
@@ -640,18 +753,33 @@ async def main():
         poll_pending_settlements_async()
     )
 
+# API Key Validation
+async def validate_api_key(x_api_key: str = Header(None)) -> APIKey:
+    """Dependency to validate API key from request headers."""
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="API key required. Use X-API-Key header.")
+
+    session = get_session()
+    try:
+        api_key = APIKey.verify_key(x_api_key, session)
+        if not api_key:
+            raise HTTPException(status_code=401, detail="Invalid or inactive API key")
+        return api_key
+    finally:
+        session.close()
+
 def get_status(escrowId: str):
     if escrowId.startswith("0x"):
         escrowId = escrowId[2:]
 
     print(f"Processing escrowId: {escrowId}")
-    
+
     id_hash_bytes = Web3.to_bytes(hexstr=escrowId)
 
     network, contract = find_network_for_settlement(id_hash_bytes)
 
-    pending_escrows = contract.functions.getPendingEscrows().call({"from": bdag_account.address})
-    completed_escrows = contract.functions.getCompletedEscrows().call({"from": bdag_account.address})
+    pending_escrows = contract.functions.getPendingEscrows().call({"from": base_account.address})
+    completed_escrows = contract.functions.getCompletedEscrows().call({"from": base_account.address})
 
     if id_hash_bytes in pending_escrows:
         return {"status": "pending", "message": "Pending settlement found."}
@@ -675,21 +803,12 @@ async def config():
         clean_config[net] = {k:v for k,v in cfg.items() if k != "abi"}
     return clean_config
 
-@app.on_event("startup")
-async def startup_event():
-    # Schedule your async log loop and polling tasks
-    asyncio.create_task(main_log_loop())
-    asyncio.create_task(poll_pending_settlements_async())
-    asyncio.create_task(poll_and_expire_escrows(interval=60*5))  # every 5 minutes
-    update_exchange_rates()
-    init_events_table()
-    update_pending_contract_ids()
 
 @app.get("/supported_networks")
 async def supported_networks():
     struct = {
-        "blockdag-testnet": {
-            "chain_id": bdag_w3.eth.chain_id
+        "base-sepolia": {
+            "chain_id": base_w3.eth.chain_id
         }
     }
 
@@ -699,7 +818,7 @@ async def supported_networks():
 async def charts():
     graph_json = create_charts()
 
-    blockdag_free_balance_raw = blockdag_contract.functions.getFreeBalance().call()
+    blockdag_free_balance_raw = base_contract.functions.getFreeBalance().call()
     blockdag_free_balance = blockdag_free_balance_raw / 1e6  # USDC has 6 decimals
 
     return {"graph_1": graph_json, "graph_2": json.dumps({}), "bdag_balance": blockdag_free_balance}
@@ -729,6 +848,8 @@ async def pending_ids_endpoint():
 async def webhook(payload: WebhookPayload, background_tasks: BackgroundTasks):
     if not payload.webhook_url:
         return {"error": "webhook_url required"}
+    print(f'Received webhook request for escrowId: {payload.escrowId}')
+    print(f'Webhook URL: {payload.webhook_url}')
     if not payload.escrowId:
         raise HTTPException(status_code=400, detail="No data provided")
 
@@ -736,6 +857,29 @@ async def webhook(payload: WebhookPayload, background_tasks: BackgroundTasks):
     background_tasks.add_task(watch_escrow_status, payload.escrowId, payload.webhook_url)
 
     return {"escrowId": payload.escrowId, "status": "processed"}
+
+@app.post("/admin/generate_api_key")
+async def generate_api_key_admin(request: APIKeyCreateRequest, str = Depends(require_admin_auth)):
+    """Generate a new API key - PostgreSQL version."""
+    session = get_session()
+    try:
+        key, api_key_obj = APIKey.create(request.name, session)
+
+        return APIKeyGenerateResponse(
+            key=key,
+            api_key=APIKeyResponse(
+                id=api_key_obj.id,
+                name=api_key_obj.name,
+                created_at=api_key_obj.created_at.isoformat(),
+                last_used_at=api_key_obj.last_used_at.isoformat() if api_key_obj.last_used_at else None,
+                is_active=api_key_obj.is_active
+            )
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to generate API key: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate API key")
+    finally:
+        session.close()
 
 @app.get("/escrow_info/{escrowId}")
 async def escrow_info(escrowId):
@@ -775,27 +919,27 @@ def get_fee():
     return {"fee_pct": fee_pct}
 
 @app.post("/request_payment")
-async def request_payment(payload: RequestPaymentPayload):
+async def request_payment(payload: RequestPaymentPayload, api_key: str = Depends(require_auth)):
     amount = payload.amount
     receiver = payload.receiver
-    email = payload.email
+    email = recipient_email
     network = payload.network
 
     if network not in SUPPORTED_NETWORKS:
         raise HTTPException(status_code=400, detail=f"Unsupported network: {network}")
 
-    w3, account = bdag_w3, bdag_account
+    w3, account = base_w3, base_account
 
     contract_address = escrow_bridge_config[network]["address"]
     abi = escrow_bridge_config[network]["abi"]
     contract = w3.eth.contract(address=contract_address, abi=abi)
 
-    decimals = 18  # Native token (BDAG)
+    decimals = token_decimals
 
     raw_amount_needed = int(amount * 10**decimals)
     print(f"Raw amount needed: {raw_amount_needed}")
 
-    settlement_id = secrets.token_hex(4)
+    settlement_id = secrets.token_hex(16)
     print(f"Generated settlement ID: {settlement_id}")
 
     salt = generate_salt()
@@ -809,11 +953,6 @@ async def request_payment(payload: RequestPaymentPayload):
         [salt, settlement_id]
     )
 
-    user_email_hash_bytes = w3.solidity_keccak(
-        ["bytes32", "string"],
-        [salt, email]
-    )
-
     id_hash = id_hash_bytes.hex()
     print(f"> Computed id_hash = {id_hash}")
 
@@ -823,7 +962,6 @@ async def request_payment(payload: RequestPaymentPayload):
     try:
         tx = contract.functions.initPayment(
             id_hash_bytes,
-            user_email_hash_bytes,
             raw_amount_needed,
             receiver
         ).build_transaction({
@@ -858,7 +996,37 @@ async def request_payment(payload: RequestPaymentPayload):
 
         print(f"initPayment({settlement_id}, {amount}) submitted -> Tx: {h_init.hex()}")
 
-        return {"tx_hash": h_init.hex(), "id_hash": id_hash, "network": network}
+        user_url = None
+        message = None
+
+        # Try to register with ChainSettle, but continue if it fails
+        try:
+            payload = {
+                "salt": salt,
+                "settlement_id": settlement_id,
+                "recipient_email": recipient_email,
+            }
+
+            r = requests.post(f"{CHAINSETTLE_API_URL}/settlement/register_settlement",
+                             json=payload, timeout=10)
+            r.raise_for_status()
+            resp = r.json()
+            print(f'resp: {resp}')
+
+            if 'user_url' in resp.get('settlement_info', {}):
+                url = resp.get('settlement_info', {}).get('user_url')
+                if url:
+                    user_url = url
+                    print(f"User URL: {user_url}")
+                else:
+                    message = "No user URL returned from ChainSettle API. On-chain payment initialized. You can register the settlement manually."
+            else:
+                message = "No user URL returned from ChainSettle API. On-chain payment initialized. You can register the settlement manually."
+        except Exception as e:
+            print(f"Warning: ChainSettle registration failed: {e}")
+            message = f"On-chain payment initialized (escrow_id: {id_hash[:16]}...). ChainSettle registration failed. You can register the settlement manually using the settlement_id and salt."
+
+        return {"tx_hash": h_init.hex(), "escrow_id": id_hash, "network": network, "settlement_id": settlement_id, "salt": salt, "user_url": user_url, "message": message}
 
     except HTTPException:
         raise

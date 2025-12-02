@@ -11,5 +11,6 @@ RUN apt-get update && apt-get install -y bash
 # Install backend & CLI dependencies
 RUN pip install --upgrade pip && pip install -e ./backend
 
-# Default entrypoint is the admin CLI
-ENTRYPOINT ["python", "-m", "backend.admin_cli"]
+# Entrypoint for escrow-bridge-admin CLI
+ENTRYPOINT ["escrow-bridge-admin"]
+CMD ["--help"]

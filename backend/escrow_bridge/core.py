@@ -69,12 +69,15 @@ def network_func(network='blockdag-testnet'):
                 GATEWAY = 'https://eth-sepolia.public.blastapi.io'
 
     elif network == 'base-sepolia':
-        GATEWAY = f'https://base-sepolia.gateway.tenderly.co/{TENDERLY_API_KEY}'
+        
+        GATEWAY = f'https://base-sepolia.g.alchemy.com/v2/{ALCHEMY_API_KEY}'
 
     elif network == 'blockdag-testnet':
         GATEWAY = BLOCKDAG_RPC_URL
 
     w3 = Web3(Web3.HTTPProvider(GATEWAY))
+
+    print(f"Connecting to {network} at {GATEWAY}...")
 
     account = None
 

@@ -164,7 +164,7 @@
   /* Info Row */
   .info-row {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 1.5rem;
     margin-bottom: 2.5rem;
   }
@@ -349,6 +349,12 @@
   }
 
   /* Responsive */
+  @media (max-width: 1024px) {
+    .info-row {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
   @media (max-width: 768px) {
     body {
       padding: 1rem;
@@ -452,6 +458,18 @@ function fetchEscrowTime() {
     .catch(err => console.error("Error fetching escrow time:", err));
 }
 
+function fetchFee() {
+  fetch("/fee")
+    .then(r => r.json())
+    .then(data => {
+      const div = document.getElementById("fee-display");
+      div.innerHTML = `
+        <p><strong>Desk Fee:</strong> ${data.fee_pct}</p>
+      `;
+    })
+    .catch(err => console.error("Error fetching fee:", err));
+}
+
 function fetchNetworkAddresses() {
   fetch("/config")
     .then(r => r.json())
@@ -552,6 +570,7 @@ window.addEventListener("load", () => {
   plotCharts();
   fetchPendingIds();
   fetchEscrowTime();
+  fetchFee();
   fetchNetworkAddresses();
 });
 </script>
@@ -585,6 +604,10 @@ window.addEventListener("load", () => {
       <div class="rate-card">
         <h3>Max Escrow Duration</h3>
         <div id="escrow-time-display"></div>
+      </div>
+      <div class="rate-card">
+        <h3>Fee</h3>
+        <div id="fee-display"></div>
       </div>
     </div>
   </section>

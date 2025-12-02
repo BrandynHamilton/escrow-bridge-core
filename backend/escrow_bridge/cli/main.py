@@ -32,35 +32,51 @@ STATUS_MAP = {
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Go up from escrow_bridge/cli to project root, then to contracts
 CONTRACTS_DIR = os.path.join(BASE_DIR, "..", "..", "..", "contracts")
-# Using EscrowBridge (USDC version) for BlockDAG
+# Using EscrowBridge (USDC version) for Base Sepolia
 escrow_bridge_artifact_path = os.path.join(CONTRACTS_DIR, "out", "EscrowBridge.sol", "EscrowBridge.json")
 
 bdag_address_path = os.path.join(CONTRACTS_DIR, "deployments", "blockdag-escrow-bridge.json")
+base_address_path = os.path.join(CONTRACTS_DIR, "deployments", "base-escrow-bridge.json")
 
 PRIVATE_KEY = os.getenv('PRIVATE_KEY')
 BLOCKDAG_TESTNET_GATEWAY_URL = os.getenv('BLOCKDAG_TESTNET_GATEWAY_URL', 'https://rpc.primordial.bdagscan.com/')
+BASE_SEPOLIA_GATEWAY_URL = os.getenv('BASE_SEPOLIA_GATEWAY_URL', "https://sepolia.base.org/")
 CHAINSETTLE_API_URL = os.getenv('CHAINSETTLE_API_URL', "https://api.chainsettle.tech")
 
 with open(bdag_address_path, 'r') as f:
     ESCROW_BRIDGE_ADDRESS_BDAG = json.load(f)['deployedTo']
 
+with open(base_address_path, 'r') as f:
+    ESCROW_BRIDGE_ADDRESS_BASE = json.load(f)['deployedTo']
+
 with open(escrow_bridge_artifact_path, 'r') as f:
     escrow_bridge_abi = json.load(f)['abi']
 
-# EscrowBridge (USDC) on BlockDAG Testnet only
-escrow_bridge_config = {
-    "blockdag-testnet": {
-        "address": ESCROW_BRIDGE_ADDRESS_BDAG,
-        "abi": escrow_bridge_abi
+# Network configuration with gateway URLs and explorer URLs
+NETWORK_CONFIG = {
+    # "blockdag-testnet": {
+    #     "address": ESCROW_BRIDGE_ADDRESS_BDAG,
+    #     "abi": escrow_bridge_abi,
+    #     "gateway": BLOCKDAG_TESTNET_GATEWAY_URL,
+    #     "explorer": "https://primordial.bdagscan.com/tx/"
+    # },
+    "base-sepolia": {
+        "address": ESCROW_BRIDGE_ADDRESS_BASE,
+        "abi": escrow_bridge_abi,
+        "gateway": BASE_SEPOLIA_GATEWAY_URL,
+        "explorer": "https://sepolia.basescan.org/tx/"
     },
 }
 
-bdag_w3 = Web3(Web3.HTTPProvider(BLOCKDAG_TESTNET_GATEWAY_URL))
-blockdag_contract = bdag_w3.eth.contract(address=ESCROW_BRIDGE_ADDRESS_BDAG, abi=escrow_bridge_abi)
+# Keep old name for compatibility
+escrow_bridge_config = {net: {"address": cfg["address"], "abi": cfg["abi"]} for net, cfg in NETWORK_CONFIG.items()}
+
+base_w3 = Web3(Web3.HTTPProvider(BASE_SEPOLIA_GATEWAY_URL))
+base_contract = base_w3.eth.contract(address=ESCROW_BRIDGE_ADDRESS_BASE, abi=escrow_bridge_abi)
 
 # Fetch max escrow time with fallback
 try:
-    max_escrow_time = blockdag_contract.functions.maxEscrowTime().call()
+    max_escrow_time = base_contract.functions.maxEscrowTime().call()
 except Exception as e:
     print_status(f"Warning: Could not fetch maxEscrowTime: {e}", level="warn")
     max_escrow_time = 3600  # Default 1 hour
@@ -132,11 +148,11 @@ def find_network_for_settlement(settlement_id):
         network = cached_result["network"]
         address = cached_result["address"]
         abi = escrow_bridge_config[network]["abi"]
-        contract = bdag_w3.eth.contract(address=address, abi=abi)
+        contract = base_w3.eth.contract(address=address, abi=abi)
         return network, contract
 
     for net in SUPPORTED_NETWORKS:
-        w3 = bdag_w3
+        w3 = base_w3
         address = escrow_bridge_config[net]["address"]
         abi = escrow_bridge_config[net]["abi"]
 
@@ -257,7 +273,7 @@ def poll_status(escrow_id, timeout, delay):
 
 @click.command()
 @click.option("--amount", default=1, type=int, help="Amount of BDAG/USDC you wish to receive.")
-@click.option("--network", default="blockdag-testnet", type=click.Choice(SUPPORTED_NETWORKS), help="Blockchain network to use.")
+@click.option("--network", default="base-sepolia", type=click.Choice(SUPPORTED_NETWORKS), help="Blockchain network to use.")
 @click.option("--recipient", default=None, type=str, help="EVM address of the recipient, defaults to sender address if not provided.")
 @click.option(
     "--private-key",
@@ -274,8 +290,8 @@ def pay(amount, network, recipient, private_key, force, verbose, gas_estimate_fa
     print_panel("Initialize Escrow", tone="info")
     print_status(f"Initializing escrow on {network} for amount: {amount}...", level="info")
 
-    GATEWAY = BLOCKDAG_TESTNET_GATEWAY_URL
-    EXPL_URL = "https://primordial.bdagscan.com/tx/"
+    GATEWAY = NETWORK_CONFIG[network]["gateway"]
+    EXPL_URL = NETWORK_CONFIG[network]["explorer"]
 
     try:
         w3 = Web3(Web3.HTTPProvider(GATEWAY))
@@ -475,7 +491,7 @@ def pay(amount, network, recipient, private_key, force, verbose, gas_estimate_fa
 
 @click.command()
 @click.option("--amount", default=1, type=int, help="Amount of BDAG/USDC you wish to receive.")
-@click.option("--network", default="blockdag-testnet", type=click.Choice(SUPPORTED_NETWORKS), help="Blockchain network to use.")
+@click.option("--network", default="base-sepolia", type=click.Choice(SUPPORTED_NETWORKS), help="Blockchain network to use.")
 @click.option("--recipient", default=None, type=str, help="EVM address of the recipient, defaults to sender address if not provided.")
 @click.option(
     "--private-key",
@@ -490,8 +506,8 @@ def init_escrow(amount, network, recipient, private_key, gas_estimate_factor, fo
     """Initialize an escrow payment on-chain only (no oracle registration)."""
     print_panel("Initialize Escrow (On-chain Only)", tone="info")
 
-    GATEWAY = BLOCKDAG_TESTNET_GATEWAY_URL
-    EXPL_URL = "https://primordial.bdagscan.com/tx/"
+    GATEWAY = NETWORK_CONFIG[network]["gateway"]
+    EXPL_URL = NETWORK_CONFIG[network]["explorer"]
 
     print_status(f"Initializing escrow on {network} for amount: {amount}...", level="info")
 
@@ -714,8 +730,8 @@ def settle(escrow_id, private_key, gas_estimate_factor):
         print_status(f"Escrow ID {escrow_id[:20]}... is already settled on {network}.", level="warn")
         return
 
-    GATEWAY = BLOCKDAG_TESTNET_GATEWAY_URL
-    EXPL_URL = "https://primordial.bdagscan.com/tx/"
+    GATEWAY = NETWORK_CONFIG[network]["gateway"]
+    EXPL_URL = NETWORK_CONFIG[network]["explorer"]
 
     print_status(f"Settling escrow ID: {escrow_id[:20]}... on {network}", level="info")
 
