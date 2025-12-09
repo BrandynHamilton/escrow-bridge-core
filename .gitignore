@@ -30,3 +30,5 @@ network_lookup_cache/
 *.env
 .env.production
 !.env.sample
+
+demos/
