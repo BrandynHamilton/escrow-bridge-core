@@ -32,3 +32,5 @@ network_lookup_cache/
 !.env.sample
 
 demos/
+audit/
+docs/

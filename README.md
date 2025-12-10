@@ -4,14 +4,16 @@
 
 It allows users to initiate escrowed payments, which are automatically released once ChainSettle confirms the associated off-chain event. The backend monitors for `PaymentInitialized` and `PaymentSettled` events and finalizes payments once confirmed.
 
-## Current Deployment: BlockDAG Testnet
+## Live Deployment
 
-| Contract | Address |
-|----------|---------|
-| EscrowBridge | `0x3256198F95c1e9007C893185aF486354699f74E9` |
-| TestUSDC | `0xEF57Ce13223a0FE3960EF336AC4a63bBaC461344` |
+### Base Sepolia Testnet
 
-Explorer: [primordial.bdagscan.com](https://primordial.bdagscan.com)
+| Resource                  | URL/Address                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------- |
+| **Web App**               | [escrowbridge.xyz](https://www.escrowbridge.xyz/)                                                       |
+| **Data Dashboard**        | [app.escrowbridge.xyz](https://app.escrowbridge.xyz/)                                                   |
+| **EscrowBridge Contract** | `0x30C6E98101C90eD65F4fA5f15188694aCf1D712B`                                                            |
+| **Explorer**              | [sepolia.basescan.org](https://sepolia.basescan.org/address/0x30C6E98101C90eD65F4fA5f15188694aCf1D712B) |
 
 ---
 
@@ -19,8 +21,8 @@ Explorer: [primordial.bdagscan.com](https://primordial.bdagscan.com)
 
 ### Core Components
 
-- **EscrowBridge.sol**: USDC-compatible smart contract that manages escrow lifecycle on BlockDAG Testnet.
-- **TestUSDC.sol**: Test ERC20 token (6 decimals) for testnet USDC simulation.
+- **EscrowBridge.sol**: USDC-compatible smart contract that manages escrow lifecycle on Base Sepolia Testnet.
+- **TestUSDC.sol**: Test ERC20 token (6 decimals) for testnet USDC simulation (uses native Base Sepolia USDC in production).
 - **FastAPI Listener**: Event-driven service that monitors on-chain events, auto-settles payments, expires stale escrows, and exposes REST API endpoints.
 - **CLI Tools**: Command line interfaces for users (`escrow-cli`) and administrators (`escrow-admin`).
 - **Python SDK**: Sync and async clients for programmatic API access.
@@ -28,6 +30,7 @@ Explorer: [primordial.bdagscan.com](https://primordial.bdagscan.com)
 ### Event Listener
 
 The backend automatically:
+
 - Listens for `PaymentInitialized` events to track new escrows
 - Polls the ChainSettle oracle for finalization status
 - Calls `settlePayment()` once oracle confirms the off-chain payment
@@ -38,13 +41,9 @@ The backend automatically:
 
 ## Documentation
 
-More in-depth documentation can be found at [docs.escrowbridge.xyz](https://docs.escrowbridge.xyz/)
+Comprehensive documentation, guides, and API references are available but not included in this repository.
 
----
-
-## Demos
-
-The `demos` directory has videos showing the workflow for both automated and manual workflows.
+For support or questions, please open an issue on GitHub.
 
 ---
 
@@ -75,21 +74,21 @@ Open http://localhost:4284/ to see the listener dashboard with live analytics.
 
 ### 4. API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/config` | GET | Contract configuration |
-| `/supported_networks` | GET | List supported networks |
-| `/exchange_rates` | GET | Current exchange rates |
-| `/fee` | GET | Current fee percentage |
-| `/max_escrow_time` | GET | Max escrow duration |
-| `/status/{escrowId}` | GET | Escrow status (pending/completed) |
-| `/escrow_info/{escrowId}` | GET | Detailed escrow payment info |
-| `/pending_ids` | GET | List pending escrow IDs |
-| `/events` | GET | Settled events history |
-| `/charts` | GET | Analytics charts data |
-| `/request_payment` | POST | Initiate a new payment request |
-| `/webhook` | POST | Register webhook for escrow completion |
+| Endpoint                  | Method | Description                            |
+| ------------------------- | ------ | -------------------------------------- |
+| `/health`                 | GET    | Health check                           |
+| `/config`                 | GET    | Contract configuration                 |
+| `/supported_networks`     | GET    | List supported networks                |
+| `/exchange_rates`         | GET    | Current exchange rates                 |
+| `/fee`                    | GET    | Current fee percentage                 |
+| `/max_escrow_time`        | GET    | Max escrow duration                    |
+| `/status/{escrowId}`      | GET    | Escrow status (pending/completed)      |
+| `/escrow_info/{escrowId}` | GET    | Detailed escrow payment info           |
+| `/pending_ids`            | GET    | List pending escrow IDs                |
+| `/events`                 | GET    | Settled events history                 |
+| `/charts`                 | GET    | Analytics charts data                  |
+| `/request_payment`        | POST   | Initiate a new payment request         |
+| `/webhook`                | POST   | Register webhook for escrow completion |
 
 Full OpenAPI docs: http://localhost:4284/docs
 
@@ -106,21 +105,22 @@ uv run escrow-cli --help
 
 **Commands:**
 
-| Command | Description |
-|---------|-------------|
-| `pay` | Full flow: init escrow, register with oracle, poll until settled |
-| `init-escrow` | Initialize escrow on-chain only (no oracle registration) |
-| `register-settlement` | Register escrow data with ChainSettle oracle |
-| `settle` | Manually settle an escrow payment |
-| `poll-status` | Poll escrow status until completion |
-| `payment-info` | Fetch payment details for an escrow ID |
-| `health` | Check ChainSettle oracle connectivity |
-| `config` | Display contract configuration |
+| Command               | Description                                                      |
+| --------------------- | ---------------------------------------------------------------- |
+| `pay`                 | Full flow: init escrow, register with oracle, poll until settled |
+| `init-escrow`         | Initialize escrow on-chain only (no oracle registration)         |
+| `register-settlement` | Register escrow data with ChainSettle oracle                     |
+| `settle`              | Manually settle an escrow payment                                |
+| `poll-status`         | Poll escrow status until completion                              |
+| `payment-info`        | Fetch payment details for an escrow ID                           |
+| `health`              | Check ChainSettle oracle connectivity                            |
+| `config`              | Display contract configuration                                   |
 
 **Example:**
+
 ```bash
 # Full payment flow (init + register + poll)
-uv run escrow-cli pay --amount 10 --network blockdag-testnet
+uv run escrow-cli pay --amount 10 --network base-sepolia
 
 # Check payment info
 uv run escrow-cli payment-info --escrow-id 0x...
@@ -135,19 +135,20 @@ uv run escrow-admin --help
 
 **Commands:**
 
-| Command | Description |
-|---------|-------------|
-| `fund-escrow` | Fund the EscrowBridge contract with USDC |
-| `check-exchange-rate` | Check current exchange rate |
-| `update-exchange-rate` | Update the exchange rate on-chain |
+| Command                | Description                              |
+| ---------------------- | ---------------------------------------- |
+| `fund-escrow`          | Fund the EscrowBridge contract with USDC |
+| `check-exchange-rate`  | Check current exchange rate              |
+| `update-exchange-rate` | Update the exchange rate on-chain        |
 
 **Example:**
+
 ```bash
 # Fund escrow bridge with 1000 USDC
-uv run escrow-admin fund-escrow --amount 1000 --network blockdag-testnet
+uv run escrow-admin fund-escrow --amount 1000 --network base-sepolia
 
 # Update exchange rate
-uv run escrow-admin update-exchange-rate --exchange-rate 1.0 --network blockdag-testnet
+uv run escrow-admin update-exchange-rate --exchange-rate 1.0 --network base-sepolia
 ```
 
 ---
@@ -165,7 +166,7 @@ pip install httpx
 ```python
 from escrow_bridge.sdk import EscrowBridgeSDK
 
-sdk = EscrowBridgeSDK("http://localhost:4284")
+sdk = EscrowBridgeSDK("https://app.escrowbridge.xyz")
 
 # Check health
 print(sdk.health())
@@ -178,7 +179,7 @@ result = sdk.request_payment(
     amount=100.0,
     receiver="0x...",
     email="user@example.com",
-    network="blockdag-testnet"
+    network="base-sepolia"
 )
 print(f"Escrow ID: {result['id_hash']}")
 
@@ -197,7 +198,7 @@ sdk.webhook(
 ```python
 from escrow_bridge.sdk import AsyncEscrowBridgeSDK
 
-async with AsyncEscrowBridgeSDK("http://localhost:4284") as sdk:
+async with AsyncEscrowBridgeSDK("https://app.escrowbridge.xyz") as sdk:
     health = await sdk.health()
     rates = await sdk.exchange_rates()
     result = await sdk.request_payment(
